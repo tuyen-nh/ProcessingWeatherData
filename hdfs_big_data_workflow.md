@@ -1,32 +1,37 @@
-# Big Data Processing Workflow with HDFS (Hadoop Distributed File System)
+# Big Data Processing Workflow with HDFS (Hadoop on Docker)
 
-Processing Big Data using distributed storage systems like HDFS involves a multi-step workflow designed to handle massive volumes of data efficiently, fault-tolerantly, and in parallel. Below is the standard end-to-end workflow along with code examples.
+Processing Big Data using distributed storage systems like HDFS involves a multi-step workflow designed to handle massive volumes of data. Below is the complete workflow tailored specifically for a **Weather Data Project** running in a **Docker** environment.
 
 ## 1. Data Ingestion (Collection) & 2. Distributed Storage (HDFS)
-The first step is gathering raw data and moving it into the Hadoop ecosystem. Once ingested, data is stored in a distributed manner across the HDFS cluster.
+The first step is moving the data file (e.g., `weather.csv`) from your host machine into the Hadoop cluster (HDFS). 
 
-### HDFS Command Line Examples
-You typically use the `hdfs dfs` command line utility to interact with the file system.
+Since you are running Hadoop via Docker, you cannot run `hdfs dfs` directly on your host machine. You need to bridge the file: **Host Machine -> Container -> HDFS**.
+
+### HDFS Command Line Examples (for Docker)
+Execute the following commands sequentially in your Terminal (ensure your `weather.csv` file is in the current working directory):
 
 ```bash
-# 1. Create a directory in HDFS for your raw data
-hdfs dfs -mkdir -p /user/data/raw/sales_data
+# 0. Copy the file from your local machine to the /tmp/ directory of the namenode container
+docker cp ./weather.csv namenode:/tmp/weather.csv
 
-# 2. Upload a local CSV file into the HDFS directory
-hdfs dfs -put ./local_sales_data.csv /user/data/raw/sales_data/
+# 1. Create a directory in HDFS for your raw weather data
+docker exec -it namenode hdfs dfs -mkdir -p /user/data/raw/weather_data
+
+# 2. Upload the CSV file (from the container's /tmp) into the HDFS directory
+docker exec -it namenode hdfs dfs -put /tmp/weather.csv /user/data/raw/weather_data/
 
 # 3. List the files in the HDFS directory to verify
-hdfs dfs -ls /user/data/raw/sales_data/
+docker exec -it namenode hdfs dfs -ls /user/data/raw/weather_data/
 
 # 4. View the first few lines of the uploaded file
-hdfs dfs -cat /user/data/raw/sales_data/local_sales_data.csv | head -n 5
+docker exec -it namenode hdfs dfs -cat /user/data/raw/weather_data/weather.csv | head -n 5
 ```
 
 ## 3. Data Processing & Transformation (Compute)
-Raw data stored in HDFS must be cleaned, transformed, and aggregated. Historically, **Hadoop MapReduce** was the primary way to do this. Today, **Apache Spark** is the modern standard because it is much faster (in-memory processing). Below are examples of both.
+Once the data is securely stored in HDFS, the next step is processing it. Below are two industry-standard approaches: using **Hadoop MapReduce (Java)** or **Apache Spark (Python/Java)**.
 
-### Option A: Hadoop MapReduce Example (Classic Approach)
-MapReduce splits processing into two phases: `Map` (filtering/sorting) and `Reduce` (summarizing). Here is a classic Java MapReduce example for calculating Total Sales by Category.
+### Option A: Hadoop MapReduce Example (Classic Java)
+This is the original Hadoop approach. MapReduce divides the work into two phases: `Map` (filtering) and `Reduce` (aggregating). Below is a Java example that finds the maximum temperature for each region.
 
 ```java
 import java.io.IOException;
@@ -36,34 +41,34 @@ import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
 
 // 1. The Mapper Class
-// Takes a line of text, extracts category and sales amount
-public class SalesMapper extends Mapper<Object, Text, Text, DoubleWritable> {
-    private Text category = new Text();
-    private DoubleWritable amount = new DoubleWritable();
+// Extracts the Region and the Temperature from each line
+public class WeatherMapper extends Mapper<Object, Text, Text, DoubleWritable> {
+    private Text region = new Text();
+    private DoubleWritable temp = new DoubleWritable();
 
     public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
         String[] columns = value.toString().split(",");
-        // Assuming CSV format: transaction_id, category, amount, date
-        if (columns.length == 4 && !columns[0].equals("transaction_id")) { 
-            category.set(columns[1]); // e.g., "Electronics"
-            amount.set(Double.parseDouble(columns[2])); // e.g., 299.99
-            context.write(category, amount); // Key-Value pair emitted
+        // Assuming CSV structure: date, region, temp, humidity
+        if (columns.length == 4 && !columns[0].equals("date")) { 
+            region.set(columns[1]); // e.g., "Hanoi"
+            temp.set(Double.parseDouble(columns[2])); // e.g., 32.5
+            context.write(region, temp); // Emits key-value pair: (Hanoi, 32.5)
         }
     }
 }
 
 // 2. The Reducer Class
-// Receives all amounts for a specific category and sums them up
-public class SalesReducer extends Reducer<Text, DoubleWritable, Text, DoubleWritable> {
-    private DoubleWritable result = new DoubleWritable();
+// Aggregates all recorded temperatures for a specific region and finds the Max
+public class WeatherReducer extends Reducer<Text, DoubleWritable, Text, DoubleWritable> {
+    private DoubleWritable maxTemp = new DoubleWritable();
 
     public void reduce(Text key, Iterable<DoubleWritable> values, Context context) throws IOException, InterruptedException {
-        double sum = 0;
+        double max = Double.MIN_VALUE;
         for (DoubleWritable val : values) {
-            sum += val.get();
+            max = Math.max(max, val.get());
         }
-        result.set(sum);
-        context.write(key, result); // Final output: Category -> Total Sum
+        maxTemp.set(max);
+        context.write(key, maxTemp); // Final Output: (Hanoi, 39.5)
     }
 }
 ```
@@ -71,57 +76,100 @@ public class SalesReducer extends Reducer<Text, DoubleWritable, Text, DoubleWrit
 *To run this MapReduce job, you would compile it into a `.jar` file and execute it using:*
 `hadoop jar SalesJob.jar SalesDriver /user/data/raw/sales_data /user/data/processed/sales_output`
 
-### Option B: PySpark Example (Modern Approach)
-While MapReduce requires a lot of code and reads/writes to disk frequently, Spark does the same task with less code and processes it in memory.
+### Option B: PySpark Example (Batch Layer in Lambda Architecture)
+While MapReduce requires a lot of code and reads/writes to disk frequently, Spark does the same task with less code and processes it in memory. 
+
+In a **Lambda Architecture**, this script represents typical **Batch Layer** processing. It reads the immutable master dataset (raw data) from HDFS, processes the entire batch, and outputs an optimized columnar format (Parquet) to be used by the **Serving Layer**.
 
 ```python
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, to_date
 
 # 1. Initialize SparkSession
-spark = SparkSession.builder.appName("SalesDataProcessing").getOrCreate()
+spark = SparkSession.builder.appName("WeatherDataProcessing").getOrCreate()
 
 # 2. Read raw CSV data from HDFS
-raw_df = spark.read.csv("hdfs:///user/data/raw/sales_data/local_sales_data.csv", header=True, inferSchema=True)
+raw_df = spark.read.csv("hdfs:///user/data/raw/weather_data/weather.csv", header=True, inferSchema=True)
 
 # 3. Data Cleaning and Transformation
+# Filtering out records with missing temperature data and fixing the date format
 processed_df = raw_df \
-    .filter(col("amount").isNotNull()) \
-    .filter(col("amount") > 0) \
-    .withColumn("sale_date", to_date(col("date_string"), "yyyy-MM-dd")) \
+    .filter(col("temp").isNotNull()) \
+    .withColumn("record_date", to_date(col("date_string"), "yyyy-MM-dd")) \
     .drop("date_string")
 
 # 4. Write the processed data back to HDFS in Parquet format
-output_path = "hdfs:///user/data/processed/sales_data/"
+output_path = "hdfs:///user/data/processed/weather_data/"
 processed_df.write.mode("overwrite").parquet(output_path)
 
 spark.stop()
 ```
 
+### Option C: Spark Java Example (Batch Layer in Lambda Architecture)
+For projects strictly using Java, Spark provides a Java API that achieves the exact same in-memory distributed processing as the Python version.
+
+```java
+import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Row;
+import org.apache.spark.sql.SparkSession;
+import static org.apache.spark.sql.functions.col;
+import static org.apache.spark.sql.functions.to_date;
+import org.apache.spark.sql.SaveMode;
+
+public class WeatherDataBatchProcessing {
+    public static void main(String[] args) {
+        // 1. Initialize SparkSession (Entry point for the Spark application)
+        SparkSession spark = SparkSession.builder()
+                .appName("WeatherDataBatchProcessing")
+                .getOrCreate();
+        
+        // 2. Read raw CSV data from HDFS
+        Dataset<Row> rawDF = spark.read()
+                .option("header", "true")
+                .option("inferSchema", "true")
+                .csv("hdfs:///user/data/raw/weather_data/weather.csv");
+                
+        // 3. Data Cleaning and Transformation
+        // Filtering out records with missing temperature data and fixing the date format
+        Dataset<Row> processedDF = rawDF
+                .filter(col("temp").isNotNull())
+                .withColumn("record_date", to_date(col("date_string"), "yyyy-MM-dd"))
+                .drop("date_string");
+                
+        // 4. Write the processed data back to HDFS in Parquet format
+        processedDF.write()
+                .mode(SaveMode.Overwrite)
+                .parquet("hdfs:///user/data/processed/weather_data/");
+                
+        spark.stop();
+    }
+}
+```
+
 ## 4. Data Warehousing & Querying (Analysis)
 Once data is processed and structured, it's typically modeled for quick querying using an SQL engine like **Apache Hive** or **Spark SQL**.
 
-### Spark SQL / Hive Example
-You can analyze the processed output using standard SQL syntax. 
+### Spark SQL Example (Weather Analytics)
+You can use standard SQL to perform advanced analytics, such as average temperature and total precipitation by region.
 
 ```python
 # Assuming you have an active SparkSession 'spark'
 
 # 1. Read the processed Parquet data back from HDFS
-processed_df = spark.read.parquet("hdfs:///user/data/processed/sales_data/")
+processed_df = spark.read.parquet("hdfs:///user/data/processed/weather_data/")
 
 # 2. Create a temporary view to run SQL queries against it
-processed_df.createOrReplaceTempView("sales")
+processed_df.createOrReplaceTempView("weather")
 
-# 3. Run a SQL query to aggregate total sales by product category
+# 3. Run a SQL query
 query = """
     SELECT 
-        category, 
-        SUM(amount) as total_sales,
-        COUNT(*) as total_transactions
-    FROM sales
-    GROUP BY category
-    ORDER BY total_sales DESC
+        region, 
+        AVG(temp) as avg_temperature,
+        SUM(precipitation) as total_precipitation
+    FROM weather
+    GROUP BY region
+    ORDER BY avg_temperature DESC
 """
 
 result_df = spark.sql(query)
@@ -133,7 +181,26 @@ result_df.show()
 ## 5. Data Consumption & Visualization
 The final step is serving the processed insights.
 *   **BI Tools:** Tableau or PowerBI can connect directly to Hive or Spark via JDBC/ODBC to visualize the output.
-*   **Application Backend:** You might export the small, aggregated summary CSV back to a traditional database like MySQL or PostgreSQL for a web application to consume using tools like Apache Sqoop.
+*   **Application Backend / Serving Layer (NoSQL):** Instead of storing final results back to HDFS as Parquet, you can write the `processedDf` directly into a fast NoSQL database like **MongoDB** or **Cassandra** so that a web application can query it instantly.
+
+#### Spark Java Example: Writing Processed Data to MongoDB
+To do this, you need to add the **MongoDB Spark Connector** dependency in your `pom.xml`. Then, replace the Parquet writing step in your Java code with the following:
+
+```java
+// Configure MongoDB URI when building SparkSession
+SparkSession spark = SparkSession.builder()
+        .appName("SalesDataBatchProcessing")
+        .config("spark.mongodb.output.uri", "mongodb://127.0.0.1:27017/bigdata_db.sales_summary")
+        .getOrCreate();
+
+// ... (your data cleaning logic here) ...
+
+// Write the DataFrame directly into MongoDB Collection 'sales_summary'
+processedDf.write()
+        .format("mongo") // or "mongodb" for connector v10+
+        .mode(SaveMode.Append)
+        .save();
+```
 
 ---
 
