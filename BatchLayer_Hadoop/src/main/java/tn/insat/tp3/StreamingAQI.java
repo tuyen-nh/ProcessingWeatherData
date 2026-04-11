@@ -64,12 +64,12 @@ public class StreamingAQI {
                 );
 
         // Requirement 5: Manage state and Output Mode
-        // Output mode is "update" to output updated windows to sink only
+        // Output mode is "update" to output updated windows to sink only       
         StreamingQuery query = windowedAggregations.writeStream()
                 .outputMode(OutputMode.Update())
                 .format("mongo") // Outputting successfully to MongoDB!
-                .option("spark.mongodb.output.uri", "mongodb+srv://sborcheni:XHJJVDb8SrAOfmig@cluster0.ymh6fip.mongodb.net/")
-                .option("spark.mongodb.output.database", "VietnamWeather")
+                .option("spark.mongodb.output.uri", "mongodb+srv://tuyen:tuyen@cluster0.tkzrw9q.mongodb.net/")
+                .option("spark.mongodb.output.database", "Big_Data")
                 .option("spark.mongodb.output.collection", "AQIStream")
                 // Requirement 5: Exactly-once semantics via distributed Checkpointing on HDFS
                 .option("checkpointLocation", "hdfs://localhost:9000/checkpoints/aqi_stream_mongo")

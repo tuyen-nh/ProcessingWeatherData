@@ -32,3 +32,9 @@ docker exec -it namenode hdfs dfs -put /tmp/vietnam_stations.csv /user/data/stat
 
 website xem dữ liệu thật trên hdfs
 http://localhost:9870/explorer.html#/user/data/raw/weather_data
+
+nơi lấy api thời tiết 
+https://www.weatherapi.com/my/fields.aspx
+
+
+mongodb+srv://tuyen:tuyen@cluster0.tkzrw9q.mongodb.net/Big_Data?appName=Cluster0

@@ -90,6 +90,22 @@ public class BatchWeatherAnalytics {
             System.out.println("Could not save to Parquet. Error: " + e.getMessage());
         }
 
+        // --- LAMBDA ARCHITECTURE: SERVING LAYER ---
+        // Writing the Batch view to MongoDB so it can be queried alongside the Speed Layer
+        System.out.println("Pushing Batch Aggregations to MongoDB (Serving Layer)...");
+        try {
+            pivotedDf.write()
+                .format("mongo")
+                .mode("overwrite")
+                .option("spark.mongodb.output.uri", "mongodb+srv://tuyen:tuyen@cluster0.tkzrw9q.mongodb.net/")
+                .option("spark.mongodb.output.database", "Big_Data")
+                .option("spark.mongodb.output.collection", "BatchHistoricalAggregations")
+                .save();
+            System.out.println("Successfully pushed Batch data to MongoDB!");
+        } catch (Exception e) {
+            System.out.println("Could not save to MongoDB. Error: " + e.getMessage());
+        }
+
         spark.stop();
     }
 }

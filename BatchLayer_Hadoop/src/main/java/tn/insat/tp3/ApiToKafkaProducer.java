@@ -29,10 +29,8 @@ public class ApiToKafkaProducer {
 
         while (true) {
             try {
-                // IMPORTANT: Replace this URL with your custom Weather API!
-                // Example:
-                // "http://api.openweathermap.org/data/2.5/weather?q=Hanoi&appid=YOUR_API_KEY"
-                URL url = new URL("https://api.coincap.io/v2/assets/bitcoin");
+                // Use WeatherAPI.com (includes both Weather + PM2.5/NO2 Air Quality data)
+                URL url = new URL("http://api.weatherapi.com/v1/current.json?key=a612c6e61fb347f38ed92614261104&q=Hanoi&aqi=yes");
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("GET");
 
@@ -47,14 +45,15 @@ public class ApiToKafkaProducer {
 
                 // Parse the response
                 JSONObject jsonResponse = new JSONObject(content.toString());
-                JSONObject data = jsonResponse.getJSONObject("data");
+                JSONObject currentData = jsonResponse.getJSONObject("current");
+                JSONObject airQuality = currentData.getJSONObject("air_quality");
 
-                // Extract data from API (Mocking real weather metrics)
-                double pm25Value = data.optDouble("priceUsd", 50.0) % 200;
-                double temperature = 25.0 + (data.optDouble("priceUsd", 50.0) % 15);
-                double humidity = 60.0 + (data.optDouble("vwap24Hr", 50.0) % 30);
-                double no2 = 10.0 + (System.currentTimeMillis() % 40);
-
+                // Extract REAL data from API (Weather + AQI combined)
+                double temperature = currentData.getDouble("temp_c");
+                double humidity = currentData.getDouble("humidity");
+                double pm25Value = airQuality.getDouble("pm2_5");
+                double no2 = airQuality.getDouble("no2");
+                
                 long timestamp = System.currentTimeMillis();
                 String stationId = "HN01"; // Assigning to Hanoi Station
 
