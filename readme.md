@@ -20,6 +20,12 @@ The Goal: To update the "Live Price" on your dashboard immediately so the user d
 
 dataset real-time for hdfs : https://meteostat.net/en/place/vn/hanoi?s=48820&t=2026-03-27/2026-04-03
 
+# sóa 1 file từ hdfs 
+docker exec -it namenode hdfs dfs -rm -r -skipTrash /user/data/raw/weather_data
+
+# tạo một thư mục mới 
+docker exec -it namenode hdfs dfs -mkdir -p /user/data/raw/weather_data
+
 # Xem danh sách các file trong thư mục:
 docker exec -it namenode hdfs dfs -ls /user/data/raw/weather_data/
 

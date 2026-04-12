@@ -15,6 +15,7 @@ public class KafkaToHDFSDumper {
         SparkSession spark = SparkSession.builder()
                 .appName("Kafka to HDFS Data Lake Dumper")
                 .master("local[*]")
+                .config("spark.hadoop.dfs.client.use.datanode.hostname", "true")
                 .getOrCreate();
 
         // 1. Define the exact schema of incoming Kafka JSON records

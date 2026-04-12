@@ -54,6 +54,10 @@ public class ApiToKafkaProducer {
                 double pm25Value = airQuality.getDouble("pm2_5");
                 double no2 = airQuality.getDouble("no2");
                 
+                System.out.println("Temperature: " + temperature);
+                System.out.println("Humidity: " + humidity);
+                System.out.println("PM2.5: " + pm25Value);
+                System.out.println("NO2: " + no2);
                 long timestamp = System.currentTimeMillis();
                 String stationId = "HN01"; // Assigning to Hanoi Station
 
@@ -66,6 +70,7 @@ public class ApiToKafkaProducer {
                 kafkaMessage.put("temperature", temperature);
                 kafkaMessage.put("humidity", humidity);
                 kafkaMessage.put("no2", no2);
+
 
                 String finalJsonString = kafkaMessage.toString();
 
