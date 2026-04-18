@@ -21,16 +21,21 @@ public class StreamingAQI {
 
         // 1. Defining the Schema for incoming Kafka JSON Data
         StructType jsonSchema = new StructType()
+                .add("date", DataTypes.StringType)
                 .add("timestamp", DataTypes.TimestampType)
                 .add("station_id", DataTypes.StringType)
-                .add("pm25", DataTypes.DoubleType);
+                .add("pm25", DataTypes.DoubleType)
+                .add("temperature", DataTypes.DoubleType)
+                .add("humidity", DataTypes.DoubleType)
+                .add("no2", DataTypes.DoubleType);
+
 
         // 2. Read continuous stream from Kafka
         // Requirement 5: Structured Streaming
         Dataset<Row> kafkaStream = spark.readStream()
                 .format("kafka")
                 .option("kafka.bootstrap.servers", "localhost:9092")
-                .option("subscribe", "vn_weather_stream")
+                .option("assign", "{\"vn_weather_stream\":[0]}")
                 .option("startingOffsets", "latest")
                 .load();
 
@@ -60,7 +65,10 @@ public class StreamingAQI {
                 )
                 .agg(
                         round(avg("pm25"), 2).alias("avg_pm25"),
-                        max("pm25").alias("peak_pm25")
+                        max("pm25").alias("peak_pm25"),
+                        round(avg("temperature"), 2).alias("avg_temp"),
+                        round(avg("humidity"), 2).alias("avg_humidity"),
+                        round(avg("no2"), 2).alias("avg_no2")
                 );
 
         // Requirement 5: Manage state and Output Mode

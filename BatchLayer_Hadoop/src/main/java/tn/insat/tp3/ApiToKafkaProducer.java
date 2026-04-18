@@ -74,8 +74,9 @@ public class ApiToKafkaProducer {
 
                 String finalJsonString = kafkaMessage.toString();
 
-                // 3. Send message payload to Kafka
-                producer.send(new ProducerRecord<>(topic, finalJsonString));
+                // 3. Send message payload to Kafka specifically to Partition 0
+                int partition = 0;
+                producer.send(new ProducerRecord<>(topic, partition, null, finalJsonString));
                 System.out.println("Successfully sent JSON to Kafka Stream: " + finalJsonString);
 
                 // Wait 4 seconds to avoid spamming the public API

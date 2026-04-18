@@ -1,3 +1,5 @@
+
+                    Phân tích thời tiết và chất lượng không khí Việt Nam 
 In a real production system, there is usually a Producer (a piece of code, like a Python script or a Java app) that fetches the crypto prices from an API. It sends that data to Kafka.
 
 From Kafka, the data "fans out" (replicates) into two parallel tracks:

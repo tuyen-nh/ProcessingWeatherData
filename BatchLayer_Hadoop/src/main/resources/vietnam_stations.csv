@@ -1,0 +1,6 @@
+station_id, station_name, province,          region,  latitude, longitude
+HN01,       Lang,         Ha Noi,            North,   21.0167,  105.8167
+ST002,      Sa Pa,        Lao Cai,           North,   22.3333,  103.8500
+ST003,      Da Nang,      Da Nang,           Central, 16.0667,  108.2333
+ST004,      Tan Son Hoa,  Ho Chi Minh,       South,   10.7833,  106.6667
+ST005,      Vung Tau,     Ba Ria - Vung Tau, South,   10.3500,  107.0833

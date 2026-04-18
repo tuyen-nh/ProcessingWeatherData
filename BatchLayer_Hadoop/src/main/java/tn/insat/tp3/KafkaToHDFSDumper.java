@@ -32,7 +32,7 @@ public class KafkaToHDFSDumper {
         Dataset<Row> rawStream = spark.readStream()
                 .format("kafka")
                 .option("kafka.bootstrap.servers", "localhost:9092")
-                .option("subscribe", "vn_weather_stream")
+                .option("assign", "{\"vn_weather_stream\":[0]}")
                 .option("startingOffsets", "latest")
                 .load();
 
