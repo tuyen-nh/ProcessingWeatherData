@@ -12,7 +12,6 @@ public class BatchWeatherAnalytics {
         // Initialize Spark Session
         SparkSession spark = SparkSession.builder()
                 .appName("Vietnam Batch Weather Analytics")
-                .master("local[*]")
                 // Disable broadcast join to demonstrate Sort-Merge Join (Requirement 3: Sort-merge join)
                 .config("spark.sql.autoBroadcastJoinThreshold", -1) 
                 .config("spark.hadoop.dfs.client.use.datanode.hostname", "true")
@@ -39,15 +38,15 @@ public class BatchWeatherAnalytics {
                     .option("header", "true")
                     .option("inferSchema", "true")
                     // The path where the manual CSV export is stored in HDFS
-                    .csv("hdfs://localhost:9000/user/data/raw/weather_data/")
+                    .csv("hdfs://namenode:9000/user/data/raw/weather_data/")
                     .withColumnRenamed("time", "timestamp")
                     .withColumn("date", to_date(col("timestamp")))
                     .withColumn("temp", col("temp").cast(DataTypes.DoubleType))
                     .withColumn("rhum", col("rhum").cast(DataTypes.DoubleType))
                     .withColumnRenamed("temp", "temperature")
                     .withColumnRenamed("rhum", "humidity")
-                    // Default station ID for Hanoi from vietnam_stations.csv is 48820
-                    .withColumn("station_id", lit(48820).cast(DataTypes.StringType))
+                    // Default station ID for Hanoi from vietnam_stations.csv is HN01
+                    .withColumn("station_id", lit("HN01").cast(DataTypes.StringType))
                     .withColumn("pm25", lit(0.0))
                     .withColumn("no2", lit(0.0));
         } catch (Exception e) {
@@ -59,7 +58,7 @@ public class BatchWeatherAnalytics {
             System.out.println("Attempting to load streaming Parquet dataset from HDFS...");
             streamedDf = spark.read()
                     // The path where KafkaToHDFSDumper writes new Parquet data
-                    .parquet("hdfs://localhost:9000/user/data/raw/weather_data_stream/");
+                    .parquet("hdfs://namenode:9000/user/data/raw/weather_data_stream/");
         } catch (Exception e) {
             System.out.println("No streaming Parquet dataset found on HDFS at /user/data/raw/weather_data_stream/ (" + e.getMessage() + ")");
         }
@@ -91,7 +90,9 @@ public class BatchWeatherAnalytics {
         Dataset<Row> stationsDf = spark.read()
                 .option("header", "true")
                 .option("inferSchema", "true")
-                .csv("hdfs://localhost:9000/user/data/static/vietnam_stations.csv");
+                .option("ignoreLeadingWhiteSpace", "true")
+                .option("ignoreTrailingWhiteSpace", "true")
+                .csv("hdfs://namenode:9000/user/data/static/vietnam_stations.csv");
 
         // Requirement 3: Sort-Merge Join
         // Since we disabled autoBroadcastJoinThreshold, Spark will use SortMergeJoin for this
@@ -123,7 +124,7 @@ public class BatchWeatherAnalytics {
         // Requirement 4: Partition Pruning and Bucketing
         // Saving the output partitioned by Region heavily optimizes future querying!
         System.out.println("Saving analytical results via Partitioning...");
-        String outputPath = "hdfs://localhost:9000/user/data/processed/weather_historical.parquet";
+        String outputPath = "hdfs://namenode:9000/user/data/processed/weather_historical.parquet";
         
         try {
             transformedDf.write()
