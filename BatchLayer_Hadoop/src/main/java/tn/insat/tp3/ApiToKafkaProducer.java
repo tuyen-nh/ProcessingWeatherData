@@ -9,9 +9,14 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 public class ApiToKafkaProducer {
 
@@ -66,77 +71,94 @@ public class ApiToKafkaProducer {
 
         System.out.println("Starting Real Weather API fetcher for 34 Cities to Kafka...");
 
+        // Thread pool: 34 threads = all cities fetched in parallel
+        ExecutorService executor = Executors.newFixedThreadPool(34);
+
         while (true) {
+            List<Future<?>> futures = new ArrayList<>();
+
             for (Map.Entry<String, String> entry : cityStations.entrySet()) {
-                String cityName = entry.getKey();
-                String stationId = entry.getValue();
-                
-                try {
+                final String cityName = entry.getKey();
+                final String stationId = entry.getValue();
+
+                Future<?> future = executor.submit(() -> {
+                    try {
                     // URL encode the city name (e.g., "Ho Chi Minh City" -> "Ho%20Chi%20Minh%20City")
-                    String encodedCity = cityName.replace(" ", "%20");
-                    URL url = new URL(
-                            "http://api.weatherapi.com/v1/current.json?key=a612c6e61fb347f38ed92614261104&q=" + encodedCity + "&aqi=yes");
-                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                    conn.setRequestMethod("GET");
+                        String encodedCity = cityName.replace(" ", "%20");
+                        URL url = new URL(
+                                "http://api.weatherapi.com/v1/current.json?key=a612c6e61fb347f38ed92614261104&q=" + encodedCity + "&aqi=yes");
+                        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                        conn.setRequestMethod("GET");
+                        conn.setConnectTimeout(15000); // 15s connect timeout
+                        conn.setReadTimeout(90000);    // 90s read timeout (handles slow API)
 
                     // Check if request was successful
-                    if (conn.getResponseCode() != 200) {
-                        System.err.println("Failed to fetch data for " + cityName + " - HTTP " + conn.getResponseCode());
-                        continue;
-                    }
+                        if (conn.getResponseCode() != 200) {
+                            System.err.println("Failed to fetch data for " + cityName + " - HTTP " + conn.getResponseCode());
+                            return;
+                        }
 
-                    BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                    String inputLine;
-                    StringBuilder content = new StringBuilder();
-                    while ((inputLine = in.readLine()) != null) {
-                        content.append(inputLine);
-                    }
-                    in.close();
-                    conn.disconnect();
+                        BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                        String inputLine;
+                        StringBuilder content = new StringBuilder();
+                        while ((inputLine = in.readLine()) != null) {
+                            content.append(inputLine);
+                        }
+                        in.close();
+                        conn.disconnect();
 
                     // Parse the response
-                    JSONObject jsonResponse = new JSONObject(content.toString());
-                    JSONObject currentData = jsonResponse.getJSONObject("current");
-                    JSONObject airQuality = currentData.getJSONObject("air_quality");
+                        JSONObject jsonResponse = new JSONObject(content.toString());
+                        JSONObject currentData = jsonResponse.getJSONObject("current");
+                        JSONObject airQuality = currentData.getJSONObject("air_quality");
 
                     // Extract REAL data from API (Weather + AQI combined)
-                    double temperature = currentData.getDouble("temp_c");
-                    double humidity = currentData.getDouble("humidity");
-                    double pm25Value = airQuality.optDouble("pm2_5", 0.0);
-                    double no2 = airQuality.optDouble("no2", 0.0);
+                        double temperature = currentData.getDouble("temp_c");
+                        double humidity = currentData.getDouble("humidity");
+                        double pm25Value = airQuality.optDouble("pm2_5", 0.0);
+                        double no2 = airQuality.optDouble("no2", 0.0);
 
-                    long timestamp = System.currentTimeMillis();
+                        long timestamp = System.currentTimeMillis();
 
                     // 2. Formatting the message as STRICT JSON
-                    JSONObject kafkaMessage = new JSONObject();
-                    kafkaMessage.put("date", new java.sql.Date(timestamp).toString());
-                    kafkaMessage.put("timestamp", new java.sql.Timestamp(timestamp).toString());
-                    kafkaMessage.put("station_id", stationId);
-                    kafkaMessage.put("pm25", pm25Value);
-                    kafkaMessage.put("temperature", temperature);
-                    kafkaMessage.put("humidity", humidity);
-                    kafkaMessage.put("no2", no2);
-                    
-                System.out.println("Station ID: " + stationId);
-                System.out.println("Temperature: " + temperature);
-                System.out.println("Humidity: " + humidity);
-                System.out.println("PM2.5: " + pm25Value);
-                System.out.println("NO2: " + no2);
-                System.out.println("Timestamp: " + timestamp);
-                    String finalJsonString = kafkaMessage.toString();
+                        JSONObject kafkaMessage = new JSONObject();
+                        kafkaMessage.put("date", new java.sql.Date(timestamp).toString());
+                        kafkaMessage.put("timestamp", new java.sql.Timestamp(timestamp).toString());
+                        kafkaMessage.put("station_id", stationId);
+                        kafkaMessage.put("pm25", pm25Value);
+                        kafkaMessage.put("temperature", temperature);
+                        kafkaMessage.put("humidity", humidity);
+                        kafkaMessage.put("no2", no2);
+
+                        System.out.println("Station ID: " + stationId);
+                        System.out.println("Temperature: " + temperature);
+                        System.out.println("Humidity: " + humidity);
+                        System.out.println("PM2.5: " + pm25Value);
+                        System.out.println("NO2: " + no2);
+                        System.out.println("Timestamp: " + timestamp);
+
+                        String finalJsonString = kafkaMessage.toString();
 
                     // 3. Send message payload to Kafka (Round-robin across all partitions)
-                    producer.send(new ProducerRecord<>(topic, finalJsonString));
-                    System.out.println("Sent " + cityName + " (" + stationId + ") to Kafka -> Temp: " + temperature + ", PM2.5: " + pm25Value);
+                        producer.send(new ProducerRecord<>(topic, finalJsonString));
+                        System.out.println("Sent " + cityName + " (" + stationId + ") to Kafka -> Temp: " + temperature + ", PM2.5: " + pm25Value);
 
                     // Wait 1 second between requests to avoid hitting WeatherAPI rate limits
                     Thread.sleep(1000);
 
-                } catch (Exception e) {
-                    System.err.println("API Error for " + cityName + ": " + e.getMessage());
-                }
+                    } catch (Exception e) {
+                        System.err.println("API Error for " + cityName + ": " + e.getMessage());
+                    }
+                });
+
+                futures.add(future);
             }
-            
+
+            // Wait for ALL 34 cities to finish before sleeping
+            for (Future<?> f : futures) {
+                try { f.get(); } catch (Exception ignored) {}
+            }
+
             System.out.println("Finished a full batch of 34 cities. Waiting 2 minutes before next update...");
             try {
                 // Wait 2 minutes before starting the next full cycle
