@@ -143,9 +143,6 @@ public class ApiToKafkaProducer {
                         producer.send(new ProducerRecord<>(topic, finalJsonString));
                         System.out.println("Sent " + cityName + " (" + stationId + ") to Kafka -> Temp: " + temperature + ", PM2.5: " + pm25Value);
 
-                    // Wait 1 second between requests to avoid hitting WeatherAPI rate limits
-                    Thread.sleep(1000);
-
                     } catch (Exception e) {
                         System.err.println("API Error for " + cityName + ": " + e.getMessage());
                     }
@@ -156,8 +153,14 @@ public class ApiToKafkaProducer {
 
             // Wait for ALL 34 cities to finish before sleeping
             for (Future<?> f : futures) {
-                try { f.get(); } catch (Exception ignored) {}
+                try { f.get(); } catch (Exception e) {
+                    System.err.println("Thread error: " + e.getMessage());
+                }
             }
+
+            // Force-flush all buffered messages to Kafka before sleeping
+            producer.flush();
+            System.out.println("All messages flushed to Kafka.");
 
             System.out.println("Finished a full batch of 34 cities. Waiting 2 minutes before next update...");
             try {

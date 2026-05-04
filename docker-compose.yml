@@ -71,7 +71,7 @@ services:
       - zookeeper_log:/var/lib/zookeeper/log
 
   kafka1:
-    image: confluentinc/cp-kafka:latest
+    image: confluentinc/cp-kafka:7.4.0
     depends_on:
       - zookeeper
     ports:
@@ -89,7 +89,7 @@ services:
       - kafka1_data:/var/lib/kafka/data
 
   kafka2:
-    image: confluentinc/cp-kafka:latest
+    image: confluentinc/cp-kafka:7.4.0
     depends_on:
       - zookeeper
     ports:
@@ -107,7 +107,7 @@ services:
       - kafka2_data:/var/lib/kafka/data
 
   kafka3:
-    image: confluentinc/cp-kafka:latest
+    image: confluentinc/cp-kafka:7.4.0
     depends_on:
       - zookeeper
     ports:

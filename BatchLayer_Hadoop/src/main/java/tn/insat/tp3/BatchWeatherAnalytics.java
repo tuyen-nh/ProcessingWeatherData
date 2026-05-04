@@ -12,8 +12,9 @@ public class BatchWeatherAnalytics {
         // Initialize Spark Session
         SparkSession spark = SparkSession.builder()
                 .appName("Vietnam Batch Weather Analytics")
+                .master("local[*]") // LOCAL: remove when deploying via spark-submit to cluster
                 // Disable broadcast join to demonstrate Sort-Merge Join (Requirement 3: Sort-merge join)
-                .config("spark.sql.autoBroadcastJoinThreshold", -1) 
+                .config("spark.sql.autoBroadcastJoinThreshold", -1)
                 .config("spark.hadoop.dfs.client.use.datanode.hostname", "true")
                 .getOrCreate();
 
@@ -38,17 +39,17 @@ public class BatchWeatherAnalytics {
                     .option("header", "true")
                     .option("inferSchema", "true")
                     // The path where the manual CSV export is stored in HDFS
-                    .csv("hdfs://namenode:9000/user/data/raw/weather_data/")
+                    // .csv("hdfs://namenode:9000/user/data/raw/weather_data/")
+                    .csv("hdfs://localhost:9000/user/data/raw/weather_data/") // LOCAL: namenode -> localhost
                     .withColumnRenamed("time", "timestamp")
                     .withColumn("date", to_date(col("timestamp")))
                     .withColumn("temp", col("temp").cast(DataTypes.DoubleType))
                     .withColumn("rhum", col("rhum").cast(DataTypes.DoubleType))
                     .withColumnRenamed("temp", "temperature")
-                    .withColumnRenamed("rhum", "humidity")
-                    // Default station ID for Hanoi from vietnam_stations.csv is HN01
-                    .withColumn("station_id", lit("HN01").cast(DataTypes.StringType))
-                    .withColumn("pm25", lit(0.0))
-                    .withColumn("no2", lit(0.0));
+                    .withColumnRenamed("rhum", "humidity");
+                    // station_id not available in historical CSV — will be null after unionByName
+                    // pm25/no2 not available in historical CSV — will be null after unionByName
+                    // unionByName(allowMissingColumns=true) handles this gracefully
         } catch (Exception e) {
             System.out.println("No historical CSV dataset found on HDFS at /user/data/raw/weather_data/ (" + e.getMessage() + ")");
         }
@@ -58,7 +59,8 @@ public class BatchWeatherAnalytics {
             System.out.println("Attempting to load streaming Parquet dataset from HDFS...");
             streamedDf = spark.read()
                     // The path where KafkaToHDFSDumper writes new Parquet data
-                    .parquet("hdfs://namenode:9000/user/data/raw/weather_data_stream/");
+                    // .parquet("hdfs://namenode:9000/user/data/raw/weather_data_stream/");
+                    .parquet("hdfs://localhost:9000/user/data/raw/weather_data_stream/"); // LOCAL: namenode -> localhost
         } catch (Exception e) {
             System.out.println("No streaming Parquet dataset found on HDFS at /user/data/raw/weather_data_stream/ (" + e.getMessage() + ")");
         }
@@ -82,7 +84,11 @@ public class BatchWeatherAnalytics {
             weatherDf = spark.read()
                     .option("header", "true")
                     .option("inferSchema", "true")
-                    .csv("d:/2025.2/BigData/2026_1_big_data/vietnam_weather_batch.csv");
+                    // Upload this CSV to HDFS first:
+                    // docker cp vietnam_weather_batch.csv namenode:/tmp/
+                    // docker exec namenode hdfs dfs -put /tmp/vietnam_weather_batch.csv hdfs://namenode:9000/user/data/raw/
+                    // .csv("hdfs://namenode:9000/user/data/raw/vietnam_weather_batch.csv");
+                    .csv("hdfs://localhost:9000/user/data/raw/vietnam_weather_batch.csv"); // LOCAL: namenode -> localhost
         }
 
         // 2. Read the static Geography data
@@ -92,7 +98,8 @@ public class BatchWeatherAnalytics {
                 .option("inferSchema", "true")
                 .option("ignoreLeadingWhiteSpace", "true")
                 .option("ignoreTrailingWhiteSpace", "true")
-                .csv("hdfs://namenode:9000/user/data/static/vietnam_stations.csv");
+                // .csv("hdfs://namenode:9000/user/data/static/vietnam_stations.csv");
+                .csv("hdfs://localhost:9000/user/data/static/vietnam_stations.csv"); // LOCAL: namenode -> localhost
 
         // Requirement 3: Sort-Merge Join
         // Since we disabled autoBroadcastJoinThreshold, Spark will use SortMergeJoin for this
@@ -111,20 +118,35 @@ public class BatchWeatherAnalytics {
 
         transformedDf.show();
 
+        // Requirement 1: Complex Aggregation — Per-Province Stats (all 34 stations)
+        System.out.println("--- Per-Province Analytics (34 Stations) ---");
+        Dataset<Row> provinceDf = transformedDf
+                .groupBy("station_id", "province", "region")
+                .agg(
+                    round(avg("temperature"), 1).alias("avg_temp"),
+                    round(max("temperature"), 1).alias("max_temp"),
+                    round(avg("humidity"), 1).alias("avg_humidity"),
+                    round(avg("pm25"), 2).alias("avg_pm25"),
+                    round(avg("no2"), 2).alias("avg_no2"),
+                    count("*").alias("record_count")
+                )
+                .orderBy("region", "province");
+        provinceDf.show(34, false);
+
         // Requirement 1: Complex Aggregation (Pivot)
-        // Pivoting data to see average PM2.5 and NO2 by region instead of rows
+        // Pivoting data to see average PM2.5 by region across dates
         System.out.println("--- Average PM2.5 Pivoted By Region ---");
         Dataset<Row> pivotedDf = transformedDf
                 .groupBy("date")
                 .pivot("region") // Pivots regions (North, Central, South) as columns
                 .agg(round(avg("pm25"), 2).alias("avg_pm25"));
-        
+
         pivotedDf.show();
 
         // Requirement 4: Partition Pruning and Bucketing
         // Saving the output partitioned by Region heavily optimizes future querying!
         System.out.println("Saving analytical results via Partitioning...");
-        String outputPath = "hdfs://namenode:9000/user/data/processed/weather_historical.parquet";
+        String outputPath = "hdfs://localhost:9000/user/data/processed/weather_historical.parquet";
         
         try {
             transformedDf.write()
@@ -137,8 +159,10 @@ public class BatchWeatherAnalytics {
         }
 
         // --- LAMBDA ARCHITECTURE: SERVING LAYER ---
-        // Writing the Batch view to MongoDB so it can be queried alongside the Speed Layer
+        // Writing the Batch views to MongoDB so they can be queried alongside the Speed Layer
         System.out.println("Pushing Batch Aggregations to MongoDB (Serving Layer)...");
+
+        // Collection 1: Region-level pivot (avg PM2.5 per region per date)
         try {
             pivotedDf.write()
                 .format("mongo")
@@ -147,9 +171,23 @@ public class BatchWeatherAnalytics {
                 .option("spark.mongodb.output.database", "Big_Data")
                 .option("spark.mongodb.output.collection", "BatchHistoricalAggregations")
                 .save();
-            System.out.println("Successfully pushed Batch data to MongoDB!");
+            System.out.println("Successfully pushed Region Pivot to MongoDB!");
         } catch (Exception e) {
-            System.out.println("Could not save to MongoDB. Error: " + e.getMessage());
+            System.out.println("Could not save Region Pivot to MongoDB. Error: " + e.getMessage());
+        }
+
+        // Collection 2: Province-level stats (all 34 stations)
+        try {
+            provinceDf.write()
+                .format("mongo")
+                .mode("overwrite")
+                .option("spark.mongodb.output.uri", "mongodb+srv://tuyen:tuyen@cluster0.tkzrw9q.mongodb.net/")
+                .option("spark.mongodb.output.database", "Big_Data")
+                .option("spark.mongodb.output.collection", "ProvinceAggregations")
+                .save();
+            System.out.println("Successfully pushed Province Aggregations (34 stations) to MongoDB!");
+        } catch (Exception e) {
+            System.out.println("Could not save Province Aggregations to MongoDB. Error: " + e.getMessage());
         }
 
         spark.stop();

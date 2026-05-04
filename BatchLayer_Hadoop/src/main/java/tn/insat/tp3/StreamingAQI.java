@@ -17,6 +17,8 @@ public class StreamingAQI {
         // Initialize Spark Session
         SparkSession spark = SparkSession.builder()
                 .appName("Vietnam AQI Real-Time Streaming")
+                .master("local[*]") // LOCAL TEST: remove this when deploying to cluster via spark-submit
+                .config("spark.hadoop.dfs.client.use.datanode.hostname", "true")
                 .getOrCreate();
 
         // 1. Defining the Schema for incoming Kafka JSON Data
@@ -34,7 +36,8 @@ public class StreamingAQI {
         // Requirement 5: Structured Streaming
         Dataset<Row> kafkaStream = spark.readStream()
                 .format("kafka")
-                .option("kafka.bootstrap.servers", "kafka1:9092,kafka2:9093,kafka3:9094")
+                // .option("kafka.bootstrap.servers", "kafka1:29092,kafka2:29093,kafka3:29094")
+                .option("kafka.bootstrap.servers", "localhost:9092,localhost:9093,localhost:9094") // LOCAL TEST: change to kafka1:29092,... for cluster
                 .option("subscribe", "vn_weather_stream")
                 .option("startingOffsets", "latest")
                 .load();
@@ -48,7 +51,8 @@ public class StreamingAQI {
         // 3. Load static Geography Data from HDFS (Distributed path)
         Dataset<Row> stationsDf = spark.read()
                 .option("header", "true")
-                .csv("hdfs://namenode:9000/user/data/static/vietnam_stations.csv");
+                // .csv("hdfs://namenode:9000/user/data/static/vietnam_stations.csv");
+                .csv("hdfs://localhost:9000/user/data/static/vietnam_stations.csv"); // LOCAL: namenode -> localhost
 
         // Requirement 3: Broadcast Join (Highly Optimized)
         // Broadcasting the small CSV so all worker nodes check station_id instantly
@@ -90,15 +94,26 @@ public class StreamingAQI {
                 .withColumn("aqi_index", callUDF("pm25ToAQI", col("avg_pm25")));
 
         // Requirement 5: Manage state and Output Mode
-        // Output mode is "update" to output updated windows to sink only       
+        // format("mongo") does NOT support streaming sink directly -> use foreachBatch instead.
+        // foreachBatch converts each micro-batch into a regular batch DataFrame,
+        // which the MongoDB connector CAN write via the normal .write() API.
         StreamingQuery query = finalAggregations.writeStream()
                 .outputMode(OutputMode.Update())
-                .format("mongo") // Outputting successfully to MongoDB!
-                .option("spark.mongodb.output.uri", "mongodb+srv://tuyen:tuyen@cluster0.tkzrw9q.mongodb.net/")
-                .option("spark.mongodb.output.database", "Big_Data")
-                .option("spark.mongodb.output.collection", "AQIStream")
+                .foreachBatch((batchDF, batchId) -> {
+                    if (!batchDF.isEmpty()) {
+                        batchDF.write()
+                                .format("mongo")
+                                .mode("append")
+                                .option("spark.mongodb.output.uri", "mongodb+srv://tuyen:tuyen@cluster0.tkzrw9q.mongodb.net/")
+                                .option("spark.mongodb.output.database", "Big_Data")
+                                .option("spark.mongodb.output.collection", "AQIStream")
+                                .save();
+                        System.out.println("Batch " + batchId + " written to MongoDB: " + batchDF.count() + " records.");
+                    }
+                })
                 // Requirement 5: Exactly-once semantics via distributed Checkpointing on HDFS
-                .option("checkpointLocation", "hdfs://namenode:9000/checkpoints/aqi_stream_mongo")
+                //  .option("checkpointLocation", "hdfs://namenode:9000/checkpoints/aqi_stream_mongo")
+                .option("checkpointLocation", "hdfs://localhost:9000/checkpoints/aqi_stream_mongo") // LOCAL: namenode -> localhost
                 .start();
 
         query.awaitTermination();

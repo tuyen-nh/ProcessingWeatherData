@@ -1,6 +1,33 @@
-station_id, station_name, province,          region,  latitude, longitude
-HN01,       Lang,         Ha Noi,            North,   21.0167,  105.8167
-ST002,      Sa Pa,        Lao Cai,           North,   22.3333,  103.8500
-ST003,      Da Nang,      Da Nang,           Central, 16.0667,  108.2333
-ST004,      Tan Son Hoa,  Ho Chi Minh,       South,   10.7833,  106.6667
-ST005,      Vung Tau,     Ba Ria - Vung Tau, South,   10.3500,  107.0833
+station_id,station_name,province,region,latitude,longitude
+HN01,Lang,Ha Noi,North,21.0167,105.8167
+ST002,Sa Pa,Lao Cai,North,22.3333,103.8500
+ST003,Da Nang,Da Nang,Central,16.0667,108.2333
+ST004,Tan Son Hoa,Ho Chi Minh,South,10.7833,106.6667
+ST005,Vung Tau,Ba Ria - Vung Tau,South,10.3500,107.0833
+HU01,Hue,Hue,Central,16.4638,107.5896
+QNG01,Hoi An,Quang Nam,Central,15.8789,108.3255
+QT01,Dong Hoi,Quang Tri,Central,17.4789,106.5882
+NA01,Vinh,Nghe An,Central,18.6667,105.6667
+TH01,Thanh Hoa,Thanh Hoa,North,19.8158,105.7828
+NB01,Ninh Binh,Ninh Binh,North,20.25,105.9833
+HP01,Hai Phong,Hai Phong,North,20.8333,106.65
+BN01,Bac Ninh,Bac Ninh,North,21.1667,106.0833
+HY01,Hung Yen,Hung Yen,North,20.9667,106.0667
+PT01,Phu Tho,Phu Tho,North,21.2333,105.25
+DN01,Da Lat,Lam Dong,Central Highlands,11.9425,108.4456
+DN02,Bao Loc,Lam Dong,Central Highlands,11.5667,107.8167
+GL01,Pleiku,Gia Lai,Central Highlands,13.9667,108.0167
+CT01,Can Tho,Can Tho,Mekong Delta,10.04,105.76
+DT01,My Tho,Tien Giang,Mekong Delta,10.3667,106.3333
+VL01,Vinh Long,Vinh Long,Mekong Delta,10.2333,105.95
+AG01,Rach Gia,Kien Giang,Mekong Delta,10.0167,105.0667
+CM01,Ca Mau,Ca Mau,Mekong Delta,9.1667,105.1667
+TN01,Thai Nguyen,Thai Nguyen,North,21.6333,105.8167
+TQ01,Tuyen Quang,Tuyen Quang,North,21.8167,105.2167
+LS01,Lang Son,Lang Son,North,21.8667,106.0667
+DB01,Dien Bien Phu,Dien Bien,Northwest,21.3833,103.0167
+LC01,Lai Chau,Lai Chau,Northwest,22.3667,103.3667
+LC02,Lao Cai,Lao Cai,Northwest,22.3333,104.0333
+SL01,Son La,Son La,Northwest,21.0083,103.9333
+CB01,Cao Bang,Cao Bang,Northeast,22.65,106.25
+KH01,Nha Trang,Khanh Hoa,South Central Coast,12.25,109.1833
