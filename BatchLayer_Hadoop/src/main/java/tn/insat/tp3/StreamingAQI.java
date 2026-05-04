@@ -17,8 +17,7 @@ public class StreamingAQI {
         // Initialize Spark Session
         SparkSession spark = SparkSession.builder()
                 .appName("Vietnam AQI Real-Time Streaming")
-                .master("local[*]") // LOCAL TEST: remove this when deploying to cluster via spark-submit
-                .config("spark.hadoop.dfs.client.use.datanode.hostname", "true")
+                // master được truyền qua spark-submit --master spark://spark-master:7077
                 .getOrCreate();
 
         // 1. Defining the Schema for incoming Kafka JSON Data
@@ -31,13 +30,11 @@ public class StreamingAQI {
                 .add("humidity", DataTypes.DoubleType)
                 .add("no2", DataTypes.DoubleType);
 
-
-        // 2. Read continuous stream from Kafka
+        // 2. Read continuous stream from Kafka (internal Docker network)
         // Requirement 5: Structured Streaming
         Dataset<Row> kafkaStream = spark.readStream()
                 .format("kafka")
-                // .option("kafka.bootstrap.servers", "kafka1:29092,kafka2:29093,kafka3:29094")
-                .option("kafka.bootstrap.servers", "localhost:9092,localhost:9093,localhost:9094") // LOCAL TEST: change to kafka1:29092,... for cluster
+                .option("kafka.bootstrap.servers", "kafka1:29092,kafka2:29093,kafka3:29094")
                 .option("subscribe", "vn_weather_stream")
                 .option("startingOffsets", "latest")
                 .load();
@@ -51,8 +48,7 @@ public class StreamingAQI {
         // 3. Load static Geography Data from HDFS (Distributed path)
         Dataset<Row> stationsDf = spark.read()
                 .option("header", "true")
-                // .csv("hdfs://namenode:9000/user/data/static/vietnam_stations.csv");
-                .csv("hdfs://localhost:9000/user/data/static/vietnam_stations.csv"); // LOCAL: namenode -> localhost
+                .csv("hdfs://namenode:9000/user/data/static/vietnam_stations.csv");
 
         // Requirement 3: Broadcast Join (Highly Optimized)
         // Broadcasting the small CSV so all worker nodes check station_id instantly
@@ -74,10 +70,10 @@ public class StreamingAQI {
         spark.udf().register("pm25ToAQI", calculateAQI, DataTypes.IntegerType);
 
         // Requirement 5 & 1: Watermarking & Advanced Aggregations (Window Functions)
-        // We calculate the Moving Average of PM2.5 over a 15-minute window for each region
-        // We use Watermarking to discard any data arriving more than 2 hours late.
+        // Moving Average of PM2.5 over a 15-minute window for each region
+        // Watermarking discards data arriving more than 2 hours late.
         Dataset<Row> windowedAggregations = enrichedStream
-                .withWatermark("timestamp", "2 hours") // Handle late-arriving packets
+                .withWatermark("timestamp", "2 hours")
                 .groupBy(
                         window(col("timestamp"), "15 minutes"),
                         col("region")
@@ -95,8 +91,6 @@ public class StreamingAQI {
 
         // Requirement 5: Manage state and Output Mode
         // format("mongo") does NOT support streaming sink directly -> use foreachBatch instead.
-        // foreachBatch converts each micro-batch into a regular batch DataFrame,
-        // which the MongoDB connector CAN write via the normal .write() API.
         StreamingQuery query = finalAggregations.writeStream()
                 .outputMode(OutputMode.Update())
                 .foreachBatch((batchDF, batchId) -> {
@@ -111,9 +105,8 @@ public class StreamingAQI {
                         System.out.println("Batch " + batchId + " written to MongoDB: " + batchDF.count() + " records.");
                     }
                 })
-                // Requirement 5: Exactly-once semantics via distributed Checkpointing on HDFS
-                //  .option("checkpointLocation", "hdfs://namenode:9000/checkpoints/aqi_stream_mongo")
-                .option("checkpointLocation", "hdfs://localhost:9000/checkpoints/aqi_stream_mongo") // LOCAL: namenode -> localhost
+                // Requirement 5: Exactly-once semantics via Checkpointing (trên HDFS cluster)
+                .option("checkpointLocation", "hdfs://namenode:9000/checkpoints/aqi_stream_mongo")
                 .start();
 
         query.awaitTermination();

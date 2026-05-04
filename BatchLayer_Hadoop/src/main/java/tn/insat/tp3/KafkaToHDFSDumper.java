@@ -14,8 +14,7 @@ public class KafkaToHDFSDumper {
     public static void main(String[] args) throws Exception {
         SparkSession spark = SparkSession.builder()
                 .appName("Kafka to HDFS Data Lake Dumper")
-                .master("local[*]") // LOCAL TEST: remove this when deploying to cluster via spark-submit
-                .config("spark.hadoop.dfs.client.use.datanode.hostname", "true")
+                // master được truyền qua spark-submit --master spark://spark-master:7077
                 .getOrCreate();
 
         // 1. Define the exact schema of incoming Kafka JSON records
@@ -28,11 +27,10 @@ public class KafkaToHDFSDumper {
                 .add("pm25", DataTypes.DoubleType)
                 .add("no2", DataTypes.DoubleType);
 
-        // 2. Read RAW stream from Kafka
+        // 2. Read RAW stream from Kafka (internal Docker network)
         Dataset<Row> rawStream = spark.readStream()
                 .format("kafka")
-                // .option("kafka.bootstrap.servers", "kafka1:29092,kafka2:29093,kafka3:29094") // triển khia
-                .option("kafka.bootstrap.servers", "localhost:9092,localhost:9093,localhost:9094")
+                .option("kafka.bootstrap.servers", "kafka1:29092,kafka2:29093,kafka3:29094")
                 .option("subscribe", "vn_weather_stream")
                 .option("startingOffsets", "latest")
                 .load();
@@ -43,17 +41,12 @@ public class KafkaToHDFSDumper {
                 .select(from_json(col("value"), incomingSchema).alias("data"))
                 .select("data.*");
 
-        // 4. Dump everything into the "Master Dataset" on Hard Drive/HDFS
-        // Using OutputMode.Append() to continuously add new JSON records as Parquet files
+        // 4. Dump everything into the "Master Dataset" on HDFS
         StreamingQuery query = parsedStream.writeStream()
                 .outputMode(OutputMode.Append())
                 .format("parquet")
-                // This becomes the master historical folder for Batch Analytics on HDFS
-                // .option("path", "hdfs://namenode:9000/user/data/raw/weather_data_stream/")
-                // .option("checkpointLocation", "hdfs://namenode:9000/checkpoints/hdfs_dumper")
-                .option("path", "hdfs://localhost:9000/user/data/raw/weather_data_stream/") // LOCAL: namenode -> localhost
-                .option("checkpointLocation", "hdfs://localhost:9000/checkpoints/hdfs_dumper") // LOCAL: namenode -> localhost
-                // Flushes data to HDFS every 1 minute
+                .option("path", "hdfs://namenode:9000/user/data/raw/weather_data_stream/")
+                .option("checkpointLocation", "hdfs://namenode:9000/checkpoints/hdfs_dumper")
                 .trigger(Trigger.ProcessingTime("1 minute"))
                 .start();
 
