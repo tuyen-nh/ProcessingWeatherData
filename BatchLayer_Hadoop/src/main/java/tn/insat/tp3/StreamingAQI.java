@@ -18,6 +18,8 @@ public class StreamingAQI {
         SparkSession spark = SparkSession.builder()
                 .appName("Vietnam AQI Real-Time Streaming")
                 // master được truyền qua spark-submit --master spark://spark-master:7077
+                // Reduce shuffle partitions to match cluster size (2 workers × 2 cores)
+                .config("spark.sql.shuffle.partitions", "4")
                 .getOrCreate();
 
         // 1. Defining the Schema for incoming Kafka JSON Data
