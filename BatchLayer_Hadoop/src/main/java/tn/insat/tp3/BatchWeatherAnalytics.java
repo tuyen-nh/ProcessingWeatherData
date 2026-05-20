@@ -64,9 +64,9 @@ public class BatchWeatherAnalytics {
 
         // Union the datasets if both exist
         if (historicalDf != null && streamedDf != null) {
-            System.out.println("Combining historical and streaming datasets.");
-            // allowMissingColumns=true prevents crashes if schemas differ slightly
-            weatherDf = historicalDf.unionByName(streamedDf, true);
+                System.out.println("Combining historical and streaming datasets.");
+                // allowMissingColumns=true prevents crashes if schemas differ slightly
+                weatherDf = historicalDf.unionByName(streamedDf, true);
         } else if (historicalDf != null) {
             System.out.println("Using only historical dataset.");
             weatherDf = historicalDf;
@@ -88,7 +88,9 @@ public class BatchWeatherAnalytics {
         }
 
         // 2. Read the static Geography data
+        System.out.println("============================================================>");
         System.out.println("Reading Station Data...");
+        System.out.println("============================================================>");
         Dataset<Row> stationsDf = spark.read()
                 .option("header", "true")
                 .option("inferSchema", "true")
