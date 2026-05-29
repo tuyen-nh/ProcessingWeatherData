@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: datanode
+  namespace: bigdata
+spec:
+  serviceName: datanode-headless
+  replicas: 3        # replaces datanode, datanode1, datanode2 from docker-compose
+  selector:
+    matchLabels:
+      app: datanode
+  template:
+    metadata:
+      labels:
+        app: datanode
+    spec:
+      # initContainer replaces docker-compose SERVICE_PRECONDITION
+      initContainers:
+        - name: wait-for-namenode
+          image: busybox:1.36
+          command: ['sh', '-c', 'until wget -q -O- http://namenode:9870; do echo waiting for namenode; sleep 5; done']
+      containers:
+        - name: datanode
+          image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+          ports:
+            - containerPort: 9866
+              name: data
+          envFrom:
+            - configMapRef:
+                name: hadoop-env
+          volumeMounts:
+            - name: datanode-data
+              mountPath: /hadoop/dfs/data
+  volumeClaimTemplates:
+    - metadata:
+        name: datanode-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

@@ -23,7 +23,7 @@ public class ApiToKafkaProducer {
     public static void main(String[] args) {
         // 1. Configure Kafka Producer
         Properties props = new Properties();
-        props.put("bootstrap.servers", "localhost:9092,localhost:9093,localhost:9094");
+        props.put("bootstrap.servers", "kafka-0.kafka-headless.bigdata.svc.cluster.local:29092,kafka-1.kafka-headless.bigdata.svc.cluster.local:29092,kafka-2.kafka-headless.bigdata.svc.cluster.local:29092");
         props.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
         props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
 

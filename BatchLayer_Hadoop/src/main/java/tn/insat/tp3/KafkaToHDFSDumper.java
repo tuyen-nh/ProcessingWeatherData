@@ -30,7 +30,7 @@ public class KafkaToHDFSDumper {
         // 2. Read RAW stream from Kafka (internal Docker network)
         Dataset<Row> rawStream = spark.readStream()
                 .format("kafka")
-                .option("kafka.bootstrap.servers", "kafka1:29092,kafka2:29093,kafka3:29094")
+                .option("kafka.bootstrap.servers", "kafka-0.kafka-headless.bigdata.svc.cluster.local:29092,kafka-1.kafka-headless.bigdata.svc.cluster.local:29092,kafka-2.kafka-headless.bigdata.svc.cluster.local:29092")
                 .option("subscribe", "vn_weather_stream")
                 .option("startingOffsets", "latest")
                 .load();
