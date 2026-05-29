@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, Cell,
@@ -23,9 +24,10 @@ function Panel({ title, children, delay = 0 }) {
   )
 }
 
-const legendStyle = { fontFamily: "'Bricolage Grotesque', sans-serif", fontSize: 10, color: 'var(--muted)' }
+const legendStyle = { fontFamily: "'Be Vietnam Pro', sans-serif", fontSize: 10, color: 'var(--muted)' }
 
 export default function History() {
+  const { t } = useTranslation()
   const { cityId } = useCity()
   const [start, setStart] = useState(DEFAULT_START)
   const [end, setEnd] = useState(DEFAULT_END)
@@ -38,7 +40,7 @@ export default function History() {
     <div className="space-y-6">
       <div className="panel p-5 flex flex-wrap items-end gap-6 fade-up">
         <label className="flex flex-col gap-1.5">
-          <span className="label">Start</span>
+          <span className="label">{t('history.start')}</span>
           <input
             type="date" value={start} max={end}
             onChange={(e) => setStart(e.target.value)}
@@ -47,23 +49,23 @@ export default function History() {
         </label>
         <span className="text-faint pb-2">→</span>
         <label className="flex flex-col gap-1.5">
-          <span className="label">End</span>
+          <span className="label">{t('history.end')}</span>
           <input
             type="date" value={end} min={start} max={DEFAULT_END}
             onChange={(e) => setEnd(e.target.value)}
             className="bg-transparent border border-line hover:border-linehi focus:border-amber rounded-sm px-3 py-1.5 mono text-sm text-ink outline-none transition-colors"
           />
         </label>
-        <span className="label ml-auto pb-2">weather_historical · batch</span>
+        <span className="label ml-auto pb-2">{t('history.source')}</span>
       </div>
 
-      {loading && <Loader label="Loading history…" />}
+      {loading && <Loader label={t('history.loading')} />}
       {error && <ErrorBox error={error} />}
       {!loading && !error && (!data || data.length === 0) && <Empty />}
 
       {!loading && !error && data && data.length > 0 && (
         <>
-          <Panel title="Temperature °C — max / avg / min" delay={60}>
+          <Panel title={t('history.tempTitle')} delay={60}>
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={data} margin={{ top: 5, right: 16, bottom: 0, left: -16 }}>
                 <CartesianGrid strokeDasharray="2 4" stroke={CHART.grid} vertical={false} />
@@ -71,22 +73,22 @@ export default function History() {
                 <YAxis {...axisProps} />
                 <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} />
                 <Legend wrapperStyle={legendStyle} iconType="plainline" />
-                <Line type="monotone" dataKey="max_temp" name="max" stroke={CHART.red} dot={false} strokeWidth={1.5} />
-                <Line type="monotone" dataKey="avg_temp" name="avg" stroke={CHART.amber} dot={false} strokeWidth={2} />
-                <Line type="monotone" dataKey="min_temp" name="min" stroke={CHART.blue} dot={false} strokeWidth={1.5} />
+                <Line type="monotone" dataKey="max_temp" name={t('common.max')} stroke={CHART.red} dot={false} strokeWidth={1.5} />
+                <Line type="monotone" dataKey="avg_temp" name={t('common.avg')} stroke={CHART.amber} dot={false} strokeWidth={2} />
+                <Line type="monotone" dataKey="min_temp" name={t('common.min')} stroke={CHART.blue} dot={false} strokeWidth={1.5} />
               </LineChart>
             </ResponsiveContainer>
           </Panel>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Panel title="Average AQI" delay={120}>
+            <Panel title={t('history.aqiTitle')} delay={120}>
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={data} margin={{ top: 5, right: 8, bottom: 0, left: -16 }}>
                   <CartesianGrid strokeDasharray="2 4" stroke={CHART.grid} vertical={false} />
                   <XAxis dataKey="date" {...axisProps} />
                   <YAxis {...axisProps} />
                   <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} cursor={{ fill: CHART.cursor }} />
-                  <Bar dataKey="avg_aqi" name="avg aqi" radius={[1, 1, 0, 0]}>
+                  <Bar dataKey="avg_aqi" name={t('history.avgAqi')} radius={[1, 1, 0, 0]}>
                     {data.map((d) => (
                       <Cell key={d.date} fill={aqiColor(d.avg_aqi)} />
                     ))}
@@ -95,14 +97,14 @@ export default function History() {
               </ResponsiveContainer>
             </Panel>
 
-            <Panel title="Peak AQI Hour (0–23)" delay={180}>
+            <Panel title={t('history.peakTitle')} delay={180}>
               <ResponsiveContainer width="100%" height={240}>
                 <LineChart data={data} margin={{ top: 5, right: 8, bottom: 0, left: -16 }}>
                   <CartesianGrid strokeDasharray="2 4" stroke={CHART.grid} vertical={false} />
                   <XAxis dataKey="date" {...axisProps} />
                   <YAxis domain={[0, 23]} {...axisProps} />
                   <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} />
-                  <Line type="stepAfter" dataKey="peak_aqi_hour" name="peak hour" stroke={CHART.teal} dot={{ r: 1.5, fill: CHART.teal }} strokeWidth={1.5} />
+                  <Line type="stepAfter" dataKey="peak_aqi_hour" name={t('history.peakHour')} stroke={CHART.teal} dot={{ r: 1.5, fill: CHART.teal }} strokeWidth={1.5} />
                 </LineChart>
               </ResponsiveContainer>
             </Panel>

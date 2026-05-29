@@ -5,9 +5,9 @@ export default {
     extend: {
       // single family across the app
       fontFamily: {
-        display: ['Bricolage Grotesque', 'system-ui', 'sans-serif'],
-        sans: ['Bricolage Grotesque', 'system-ui', 'sans-serif'],
-        mono: ['Bricolage Grotesque', 'system-ui', 'sans-serif'],
+        display: ['Be Vietnam Pro', 'system-ui', 'sans-serif'],
+        sans: ['Be Vietnam Pro', 'system-ui', 'sans-serif'],
+        mono: ['Be Vietnam Pro', 'system-ui', 'sans-serif'],
       },
       // Map utilities to theme CSS variables so light/dark switch automatically.
       colors: {

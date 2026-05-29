@@ -80,10 +80,11 @@ body {
 }
 
 :root {
-  /* one family everywhere — hierarchy from weight/size/opsz/tracking */
-  --font-display: 'Bricolage Grotesque', system-ui, sans-serif;
-  --font-sans: 'Bricolage Grotesque', system-ui, sans-serif;
-  --font-mono: 'Bricolage Grotesque', system-ui, sans-serif;
+  /* one family everywhere — Be Vietnam Pro: full Vietnamese diacritics.
+     hierarchy from weight/size/tracking. */
+  --font-display: 'Be Vietnam Pro', system-ui, sans-serif;
+  --font-sans: 'Be Vietnam Pro', system-ui, sans-serif;
+  --font-mono: 'Be Vietnam Pro', system-ui, sans-serif;
 }
 
 /* Atmospheric aurora glow + grain, fixed behind everything */

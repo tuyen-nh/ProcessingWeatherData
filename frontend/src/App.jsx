@@ -8,11 +8,11 @@ import Alerts from './pages/Alerts.jsx'
 import NationalStats from './pages/NationalStats.jsx'
 
 const PAGES = [
-  { path: '/', title: 'Realtime', index: 'Speed Layer', el: <RealtimeDashboard /> },
-  { path: '/history', title: 'Historical Trends', index: 'Batch Layer', el: <History /> },
-  { path: '/compare', title: 'Lambda Comparison', index: 'Speed × Batch', el: <Compare /> },
-  { path: '/alerts', title: 'Active Alerts', index: 'Anomaly Watch', el: <Alerts /> },
-  { path: '/stats', title: 'National Index', index: '34 Provinces', el: <NationalStats /> },
+  { path: '/', titleKey: 'titles.realtime', subKey: 'sub.speed', el: <RealtimeDashboard /> },
+  { path: '/history', titleKey: 'titles.history', subKey: 'sub.batch', el: <History /> },
+  { path: '/compare', titleKey: 'titles.compare', subKey: 'sub.lambda', el: <Compare /> },
+  { path: '/alerts', titleKey: 'titles.alerts', subKey: 'sub.anomaly', el: <Alerts /> },
+  { path: '/stats', titleKey: 'titles.national', subKey: 'sub.provinces', el: <NationalStats /> },
 ]
 
 export default function App() {
@@ -27,7 +27,7 @@ export default function App() {
               path={p.path}
               element={
                 <>
-                  <TopBar title={p.title} index={p.index} />
+                  <TopBar titleKey={p.titleKey} subKey={p.subKey} />
                   <div className="px-10 py-8 flex-1">{p.el}</div>
                 </>
               }

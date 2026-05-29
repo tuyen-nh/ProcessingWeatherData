@@ -15,7 +15,7 @@ export const CHART = {
 export const axisProps = {
   stroke: CHART.axis,
   fontSize: 10,
-  fontFamily: "'Bricolage Grotesque', sans-serif",
+  fontFamily: "'Be Vietnam Pro', sans-serif",
   tickLine: false,
 }
 
@@ -24,7 +24,7 @@ export const tooltipStyle = {
   border: '1px solid var(--line-strong)',
   borderRadius: 2,
   color: 'var(--ink)',
-  fontFamily: "'Bricolage Grotesque', sans-serif",
+  fontFamily: "'Be Vietnam Pro', sans-serif",
   fontSize: 12,
 }
 
