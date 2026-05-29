@@ -1,23 +1,31 @@
 import { aqiColor } from '../utils/aqi.js'
 
 // Ranked list for national stats. metric = 'temp' | 'aqi'.
-export default function RankTable({ title, rows, metric, unit }) {
+export default function RankTable({ title, rows, metric, unit, delay = 0 }) {
+  const maxVal = Math.max(...rows.map((r) => r[metric]))
   return (
-    <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-5">
-      <h3 className="text-sm font-semibold text-slate-200 mb-3">{title}</h3>
-      <ol className="space-y-2">
+    <div className="panel p-6 fade-up" style={{ animationDelay: `${delay}ms` }}>
+      <h3 className="label mb-5">{title}</h3>
+      <ol className="space-y-3.5">
         {rows.map((r, i) => {
           const val = r[metric]
-          const color = metric === 'aqi' ? aqiColor(val) : '#fb923c'
+          const color = metric === 'aqi' ? aqiColor(val) : '#e8a04b'
           return (
-            <li key={r.city_id} className="flex items-center gap-3">
-              <span className="w-6 h-6 grid place-items-center rounded-full bg-slate-700 text-xs font-bold text-slate-300">
-                {i + 1}
-              </span>
-              <span className="flex-1 text-sm text-slate-200">{r.city_name}</span>
-              <span className="text-sm font-semibold" style={{ color }}>
-                {val} {unit}
-              </span>
+            <li key={r.city_id} className="group">
+              <div className="flex items-center gap-3">
+                <span className="mono text-[10px] text-faint w-4">{String(i + 1).padStart(2, '0')}</span>
+                <span className="display text-base text-ink flex-1 tracking-tight">{r.city_name}</span>
+                <span className="mono text-sm font-medium" style={{ color }}>
+                  {val}
+                  <span className="text-faint text-[10px] ml-1">{unit}</span>
+                </span>
+              </div>
+              <div className="mt-1.5 ml-7 h-px bg-line relative">
+                <div
+                  className="absolute inset-y-0 left-0 h-px"
+                  style={{ width: `${(val / maxVal) * 100}%`, background: color, boxShadow: `0 0 6px ${color}88` }}
+                />
+              </div>
             </li>
           )
         })}

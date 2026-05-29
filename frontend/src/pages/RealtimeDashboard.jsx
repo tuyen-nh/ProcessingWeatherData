@@ -15,24 +15,26 @@ export default function RealtimeDashboard() {
   if (error) return <ErrorBox error={error} />
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-8">
+      <div className="flex items-end justify-between fade-up">
         <div>
-          <h3 className="text-2xl font-bold text-white">{data.city_name}</h3>
-          <p className="text-xs text-slate-400">Last update: {fmtTime(data.timestamp)} · Speed Layer (Spark Streaming)</p>
+          <h3 className="display text-5xl font-semibold tracking-tight text-ink">{data.city_name}</h3>
+          <p className="label mt-2">Last reading · {fmtTime(data.timestamp)}</p>
         </div>
         <AnomalyBadge anomaly={data.is_anomaly} />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-6 flex items-center justify-center">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="lg:col-span-4 panel p-8 flex flex-col items-center justify-center fade-up" style={{ animationDelay: '60ms' }}>
+          <div className="label mb-4">Air Quality Index</div>
           <AqiGauge value={data.aqi_value} />
         </div>
-        <div className="md:col-span-2 grid grid-cols-2 gap-4">
-          <MetricCard label="Temperature" value={fmt(data.temp)} unit="°C" icon="🌡️" accent="#fb923c" />
-          <MetricCard label="Humidity" value={fmt(data.humidity, 0)} unit="%" icon="💧" accent="#38bdf8" />
-          <MetricCard label="PM2.5" value={fmt(data.pm2_5)} unit="µg/m³" icon="🫁" accent="#a78bfa" />
-          <MetricCard label="AQI Category" value={data.aqi_category} icon="🏷️" accent="#facc15" />
+
+        <div className="lg:col-span-8 grid grid-cols-2 gap-6">
+          <MetricCard label="Temperature" value={fmt(data.temp)} unit="°C" accent="var(--amber)" delay={120} />
+          <MetricCard label="Humidity" value={fmt(data.humidity, 0)} unit="%" accent="var(--teal)" delay={180} />
+          <MetricCard label="PM2.5" value={fmt(data.pm2_5)} unit="µg/m³" accent="#a78bfa" delay={240} />
+          <MetricCard label="Category" value={data.aqi_category} accent="#e8a04b" delay={300} sub="EPA scale" />
         </div>
       </div>
     </div>

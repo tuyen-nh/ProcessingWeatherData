@@ -8,28 +8,31 @@ import { Loader, ErrorBox } from '../components/Loader.jsx'
 export default function NationalStats() {
   const { data, loading, error } = useFetch(() => getStats(), [])
 
-  if (loading) return <Loader label="Aggregating national stats…" />
+  if (loading) return <Loader label="Aggregating national index…" />
   if (error) return <ErrorBox error={error} />
 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-        <MetricCard label="National Avg Temp" value={fmt(data.national_avg_temp)} unit="°C" icon="🌡️" accent="#fb923c" />
+        <MetricCard label="National Avg Temp" value={fmt(data.national_avg_temp)} unit="°C" accent="var(--amber)" delay={0} sub="34 provinces" />
         <MetricCard
           label="National Avg AQI"
           value={data.national_avg_aqi}
           unit={aqiCategory(data.national_avg_aqi)}
-          icon="🌫️"
           accent="#a78bfa"
+          delay={60}
+          sub="EPA scale"
         />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <RankTable title="🔥 Top Hottest Cities" rows={data.top_hottest_cities} metric="temp" unit="°C" />
-        <RankTable title="🏭 Top Polluted Cities" rows={data.top_polluted_cities} metric="aqi" unit="AQI" />
+        <RankTable title="Top Hottest" rows={data.top_hottest_cities} metric="temp" unit="°C" delay={120} />
+        <RankTable title="Top Polluted" rows={data.top_polluted_cities} metric="aqi" unit="AQI" delay={180} />
       </div>
 
-      <p className="text-xs text-slate-500">Batch Layer aggregation over weather_historical · all 34 provinces.</p>
+      <p className="label fade-up" style={{ animationDelay: '240ms' }}>
+        Batch aggregation · weather_historical
+      </p>
     </div>
   )
 }

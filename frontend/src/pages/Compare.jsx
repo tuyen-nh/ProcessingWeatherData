@@ -12,11 +12,13 @@ export default function Compare() {
   if (error) return <ErrorBox error={error} />
 
   return (
-    <div className="space-y-6">
-      <div className="bg-slate-800/40 border border-slate-700 rounded-xl p-4 text-sm text-slate-300">
-        <span className="font-semibold text-white">{data.city_name}</span> — Lambda comparison:
-        live <span className="text-cyan-300">Speed Layer</span> value vs same-month{' '}
-        <span className="text-amber-300">Batch Layer</span> historical baseline.
+    <div className="space-y-8">
+      <div className="fade-up">
+        <h3 className="display text-4xl font-semibold tracking-tight text-ink">{data.city_name}</h3>
+        <p className="text-sm text-muted mt-2 max-w-xl leading-relaxed">
+          Live <span className="text-amber">Speed Layer</span> reading measured against the same-month{' '}
+          <span className="text-teal">Batch Layer</span> historical baseline — the Lambda architecture's two views, side by side.
+        </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -27,6 +29,7 @@ export default function Compare() {
           deviation={data.temp_deviation}
           unit="°C"
           higherIsWorse
+          delay={60}
         />
         <DeviationStat
           label="Air Quality Index"
@@ -35,12 +38,18 @@ export default function Compare() {
           deviation={data.aqi_deviation}
           unit="AQI"
           higherIsWorse
+          delay={120}
         />
       </div>
 
-      <p className="text-xs text-slate-500">
-        Red = worse than historical norm (hotter / more polluted). Green = better.
-      </p>
+      <div className="flex gap-6 label fade-up" style={{ animationDelay: '180ms' }}>
+        <span className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full" style={{ background: '#e0644b' }} /> worse than norm
+        </span>
+        <span className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full" style={{ background: '#79c7b8' }} /> better than norm
+        </span>
+      </div>
     </div>
   )
 }

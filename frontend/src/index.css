@@ -2,17 +2,206 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+/* ============================================================
+   THEME TOKENS — next-themes sets data-theme="dark" | "light"
+   Everything (incl. charts) reads from these CSS variables.
+   ============================================================ */
+:root,
+[data-theme='dark'] {
   color-scheme: dark;
+
+  --bg: #14120f;
+  --bg-soft: #1a1714;
+  --ink: #f4efe6;
+  --muted: #a8a094;
+  --faint: #6f675c;
+  --line: rgba(244, 239, 230, 0.1);
+  --line-strong: rgba(244, 239, 230, 0.18);
+  --amber: #e8a04b;
+  --teal: #79c7b8;
+  --panel: rgba(244, 239, 230, 0.025);
+  --panel-hi: rgba(244, 239, 230, 0.045);
+
+  /* atmosphere */
+  --grain-opacity: 0.045;
+  --aurora-1: rgba(232, 160, 75, 0.1);
+  --aurora-2: rgba(121, 199, 184, 0.08);
+  --aurora-3: rgba(232, 160, 75, 0.05);
+
+  /* chart */
+  --chart-grid: #2a2620;
+  --chart-axis: #6f675c;
+  --chart-red: #e0644b;
+  --chart-blue: #6fa8d8;
+  --chart-cursor: rgba(244, 239, 230, 0.04);
 }
 
-body {
-  margin: 0;
-  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  background: #0b1220;
-  color: #e2e8f0;
+[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #f3ede2;
+  --bg-soft: #ffffff;
+  --ink: #2a2118;
+  --muted: #6b6055;
+  --faint: #9c9082;
+  --line: rgba(42, 33, 24, 0.12);
+  --line-strong: rgba(42, 33, 24, 0.22);
+  --amber: #bf7218;
+  --teal: #2f8d7d;
+  --panel: rgba(255, 255, 255, 0.55);
+  --panel-hi: rgba(255, 255, 255, 0.85);
+
+  --grain-opacity: 0.03;
+  --aurora-1: rgba(191, 114, 24, 0.1);
+  --aurora-2: rgba(47, 141, 125, 0.09);
+  --aurora-3: rgba(191, 114, 24, 0.06);
+
+  --chart-grid: #ddd2c2;
+  --chart-axis: #9c9082;
+  --chart-red: #c2452c;
+  --chart-blue: #2f6fb0;
+  --chart-cursor: rgba(42, 33, 24, 0.05);
 }
 
 * {
   box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  transition:
+    background 0.4s ease,
+    color 0.4s ease;
+}
+
+:root {
+  /* one family everywhere — hierarchy from weight/size/opsz/tracking */
+  --font-display: 'Bricolage Grotesque', system-ui, sans-serif;
+  --font-sans: 'Bricolage Grotesque', system-ui, sans-serif;
+  --font-mono: 'Bricolage Grotesque', system-ui, sans-serif;
+}
+
+/* Atmospheric aurora glow + grain, fixed behind everything */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(60% 50% at 18% 0%, var(--aurora-1), transparent 70%),
+    radial-gradient(55% 60% at 100% 8%, var(--aurora-2), transparent 70%),
+    radial-gradient(80% 70% at 50% 110%, var(--aurora-3), transparent 70%);
+  pointer-events: none;
+  transition: background 0.4s ease;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  opacity: var(--grain-opacity);
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+::selection {
+  background: var(--amber);
+  color: var(--bg);
+}
+
+/* keep recharts axis/tooltip digits aligned */
+.recharts-text,
+.recharts-default-tooltip {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Reusable atoms --- */
+@layer components {
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    backdrop-filter: blur(6px);
+    transition:
+      border-color 0.3s ease,
+      background 0.3s ease,
+      transform 0.3s ease;
+  }
+  .panel:hover {
+    border-color: var(--line-strong);
+    background: var(--panel-hi);
+  }
+  .label {
+    font-family: var(--font-sans);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .display {
+    font-family: var(--font-display);
+    font-optical-sizing: auto;
+    letter-spacing: -0.02em;
+  }
+  /* same family, just tabular figures so number columns stay aligned */
+  .mono {
+    font-family: var(--font-sans);
+    font-feature-settings: 'tnum' 1;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+  }
+}
+
+/* --- Motion --- */
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fade-up {
+  opacity: 0;
+  animation: fadeUp 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes drawArc {
+  from {
+    stroke-dashoffset: var(--arc-len);
+  }
+}
+
+@keyframes pulseDot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
+
+/* hairline scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 0;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }

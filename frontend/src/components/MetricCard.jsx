@@ -1,16 +1,19 @@
-export default function MetricCard({ label, value, unit, icon, accent = '#38bdf8' }) {
+export default function MetricCard({ label, value, unit, sub, accent = 'var(--amber)', delay = 0 }) {
   return (
-    <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-4">
-      <div className="flex items-center justify-between">
-        <span className="text-xs uppercase tracking-wide text-slate-400">{label}</span>
-        {icon && <span className="text-lg">{icon}</span>}
+    <div
+      className="panel p-5 fade-up relative overflow-hidden"
+      style={{ animationDelay: `${delay}ms` }}
+    >
+      <div
+        className="absolute left-0 top-0 h-full w-[3px]"
+        style={{ background: accent, opacity: 0.7 }}
+      />
+      <div className="label">{label}</div>
+      <div className="mt-3 flex items-baseline gap-1.5">
+        <span className="mono text-4xl font-medium leading-none text-ink">{value}</span>
+        {unit && <span className="mono text-xs text-muted">{unit}</span>}
       </div>
-      <div className="mt-2 flex items-baseline gap-1">
-        <span className="text-3xl font-bold" style={{ color: accent }}>
-          {value}
-        </span>
-        {unit && <span className="text-sm text-slate-400">{unit}</span>}
-      </div>
+      {sub && <div className="mt-2 text-[11px] text-faint">{sub}</div>}
     </div>
   )
 }

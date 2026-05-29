@@ -1,20 +1,23 @@
 export function Loader({ label = 'Loading…' }) {
   return (
-    <div className="flex items-center gap-3 text-slate-400 py-12 justify-center">
-      <span className="w-5 h-5 border-2 border-slate-600 border-t-cyan-400 rounded-full animate-spin" />
-      {label}
+    <div className="flex flex-col items-center gap-4 py-24">
+      <span className="h-6 w-6 border border-line border-t-amber rounded-full animate-spin" />
+      <span className="label">{label}</span>
     </div>
   )
 }
 
 export function ErrorBox({ error }) {
   return (
-    <div className="bg-red-500/10 border border-red-500/40 text-red-300 rounded-xl p-4 text-sm">
-      Failed to load: {String(error)}
+    <div className="panel border-l-[3px] p-5 text-sm" style={{ borderLeftColor: '#e0644b' }}>
+      <div className="label mb-1" style={{ color: '#e0644b' }}>
+        Signal Lost
+      </div>
+      <span className="text-muted mono text-xs">{String(error)}</span>
     </div>
   )
 }
 
 export function Empty({ label = 'No data.' }) {
-  return <div className="text-slate-500 text-sm py-12 text-center">{label}</div>
+  return <div className="label text-center py-24">{label}</div>
 }
