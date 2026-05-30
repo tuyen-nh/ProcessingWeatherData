@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-master
+  namespace: bigdata
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spark-master
+  template:
+    metadata:
+      labels:
+        app: spark-master
+    spec:
+      enableServiceLinks: false   # stop K8s injecting SPARK_MASTER_PORT=tcp://... which Spark tries to parseInt
+      containers:
+        - name: spark-master
+          image: spark:3.5.8-scala2.12-java11-ubuntu
+          command:
+            - /opt/spark/bin/spark-class
+            - org.apache.spark.deploy.master.Master
+          env:
+            # bind to the pod's own IP — "spark-master" resolves to the Service ClusterIP, which the pod can't bind
+            - name: SPARK_MASTER_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          ports:
+            - containerPort: 8080
+              name: webui
+            - containerPort: 7077
+              name: rpc
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
