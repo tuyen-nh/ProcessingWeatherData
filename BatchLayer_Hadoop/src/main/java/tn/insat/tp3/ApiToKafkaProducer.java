@@ -18,6 +18,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
+import javax.sound.sampled.SourceDataLine;
+
 public class ApiToKafkaProducer {
 
     public static void main(String[] args) {
@@ -112,7 +114,9 @@ public class ApiToKafkaProducer {
                         JSONObject currentData = jsonResponse.getJSONObject("current");
                         JSONObject airQuality = currentData.getJSONObject("air_quality");
 
+                        System.out.println("content: "+ content.toString());
                     // Extract REAL data from API (Weather + AQI combined)
+
                         double temperature = currentData.getDouble("temp_c");
                         double humidity = currentData.getDouble("humidity");
                         double pm25Value = airQuality.optDouble("pm2_5", 0.0);
