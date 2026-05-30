@@ -12,7 +12,8 @@ public class BatchWeatherAnalytics {
         // Initialize Spark Session
         SparkSession spark = SparkSession.builder()
                 .appName("Vietnam Batch Weather Analytics")
-                // Disable broadcast join to demonstrate Sort-Merge Join (Requirement 3: Sort-merge join)
+                // Disable broadcast join to demonstrate Sort-Merge Join (Requirement 3:
+                // Sort-merge join)
                 .config("spark.sql.autoBroadcastJoinThreshold", -1)
                 .config("spark.hadoop.dfs.client.use.datanode.hostname", "true")
                 .getOrCreate();
@@ -20,7 +21,8 @@ public class BatchWeatherAnalytics {
         // Requirement 2: Custom UDF (Calculate Heat Index/Perceived Temperature)
         // A simple formula based approximation
         UDF2<Double, Double, Double> heatIndexUDF = (temperature, humidity) -> {
-            if (temperature == null || humidity == null) return null;
+            if (temperature == null || humidity == null)
+                return null;
             // Simple approximation for demonstration: T + 0.05 * humidity
             return Math.round((temperature + (0.05 * humidity)) * 10.0) / 10.0;
         };
@@ -45,11 +47,12 @@ public class BatchWeatherAnalytics {
                     .withColumn("rhum", col("rhum").cast(DataTypes.DoubleType))
                     .withColumnRenamed("temp", "temperature")
                     .withColumnRenamed("rhum", "humidity");
-                    // station_id not available in historical CSV — will be null after unionByName
-                    // pm25/no2 not available in historical CSV — will be null after unionByName
-                    // unionByName(allowMissingColumns=true) handles this gracefully
+            // station_id not available in historical CSV — will be null after unionByName
+            // pm25/no2 not available in historical CSV — will be null after unionByName
+            // unionByName(allowMissingColumns=true) handles this gracefully
         } catch (Exception e) {
-            System.out.println("No historical CSV dataset found on HDFS at /user/data/raw/weather_data/ (" + e.getMessage() + ")");
+            System.out.println(
+                    "No historical CSV dataset found on HDFS at /user/data/raw/weather_data/ (" + e.getMessage() + ")");
         }
 
         Dataset<Row> streamedDf = null;
@@ -59,14 +62,15 @@ public class BatchWeatherAnalytics {
                     // The path where KafkaToHDFSDumper writes new Parquet data
                     .parquet("hdfs://namenode:9000/user/data/raw/weather_data_stream/");
         } catch (Exception e) {
-            System.out.println("No streaming Parquet dataset found on HDFS at /user/data/raw/weather_data_stream/ (" + e.getMessage() + ")");
+            System.out.println("No streaming Parquet dataset found on HDFS at /user/data/raw/weather_data_stream/ ("
+                    + e.getMessage() + ")");
         }
 
         // Union the datasets if both exist
         if (historicalDf != null && streamedDf != null) {
-                System.out.println("Combining historical and streaming datasets.");
-                // allowMissingColumns=true prevents crashes if schemas differ slightly
-                weatherDf = historicalDf.unionByName(streamedDf, true);
+            System.out.println("Combining historical and streaming datasets.");
+            // allowMissingColumns=true prevents crashes if schemas differ slightly
+            weatherDf = historicalDf.unionByName(streamedDf, true);
         } else if (historicalDf != null) {
             System.out.println("Using only historical dataset.");
             weatherDf = historicalDf;
@@ -83,7 +87,8 @@ public class BatchWeatherAnalytics {
                     .option("inferSchema", "true")
                     // Upload this CSV to HDFS first:
                     // docker cp vietnam_weather_batch.csv namenode:/tmp/
-                    // docker exec namenode hdfs dfs -put /tmp/vietnam_weather_batch.csv hdfs://namenode:9000/user/data/raw/
+                    // docker exec namenode hdfs dfs -put /tmp/vietnam_weather_batch.csv
+                    // hdfs://namenode:9000/user/data/raw/
                     .csv("hdfs://namenode:9000/user/data/raw/vietnam_weather_batch.csv");
         }
 
@@ -99,20 +104,45 @@ public class BatchWeatherAnalytics {
                 .csv("hdfs://namenode:9000/user/data/static/vietnam_stations.csv");
 
         // Requirement 3: Sort-Merge Join
-        // Since we disabled autoBroadcastJoinThreshold, Spark will use SortMergeJoin for this
+        // Since we disabled autoBroadcastJoinThreshold, Spark will use SortMergeJoin
+        // for this
+        // Broadcast join: copy the small data to all worker nodes
+        // Sort-Merge join: sort the large data and merge the two sorted datasets
         Dataset<Row> enrichedDf = weatherDf.join(stationsDf, "station_id");
 
         // Complex Multi-stage Transformation (Req 2)
         Dataset<Row> transformedDf = enrichedDf
                 .withColumn("heat_index", callUDF("calculateHeatIndex", col("temperature"), col("humidity")))
-                .withColumn("weather_condition", 
-                    when(col("pm25").gt(150), "Hazardous")
-                    .when(col("temperature").gt(35), "Extreme Heat")
-                    .otherwise("Normal"));
+                .withColumn("weather_condition",
+                        when(col("pm25").gt(150), "Hazardous")
+                                .when(col("temperature").gt(35), "Extreme Heat")
+                                .otherwise("Normal"));
+
+        /*
+         * đoạn trên tính toán heat_index và weather_condition dựa trên nhiệt độ và độ
+         * ẩm xem thời tiết như thế nào
+         * nó thêm 2 column mới cho dataframe
+         * heat_index tính toán chỉ số nhiệt dựa trên nhiệt độ và độ ẩm
+         * weather_condition là mô tả điều kiện thời tiết dựa trên pm2.5 và nhiệt độ
+         */
 
         // Requirement 4: Caching/Persistence strategy
         transformedDf.cache();
-
+        /*
+         * cache() sẽ lưu dữ liệu vào bộ nhớ để có thể sử dụng lại nhiều lần
+         * Lưu ý quan trọng:
+         * .cache() không phải là lưu vào RAM của một máy duy nhất!
+         * .cache() trong Spark lưu dữ liệu phân tán trên memory của tất cả worker
+         * nodes,
+         * không phải một máy duy nhất.
+         * transformedDf.cache();
+         * transformedDf.show(); // Lần 1 → trigger Action
+         * transformedDf.groupBy(...) // Lần 2 → provinceDf
+         * transformedDf.groupBy(...) // Lần 3 → có thể có thêm aggregation khác
+         * Không có cache → mỗi lần dùng transformedDf, Spark phải làm lại từ đầu:
+         * 
+         * 
+         */
         transformedDf.show();
 
         // Requirement 1: Complex Aggregation — Per-Province Stats (all 34 stations)
@@ -120,13 +150,12 @@ public class BatchWeatherAnalytics {
         Dataset<Row> provinceDf = transformedDf
                 .groupBy("station_id", "province", "region")
                 .agg(
-                    round(avg("temperature"), 1).alias("avg_temp"),
-                    round(max("temperature"), 1).alias("max_temp"),
-                    round(avg("humidity"), 1).alias("avg_humidity"),
-                    round(avg("pm25"), 2).alias("avg_pm25"),
-                    round(avg("no2"), 2).alias("avg_no2"),
-                    count("*").alias("record_count")
-                )
+                        round(avg("temperature"), 1).alias("avg_temp"),
+                        round(max("temperature"), 1).alias("max_temp"),
+                        round(avg("humidity"), 1).alias("avg_humidity"),
+                        round(avg("pm25"), 2).alias("avg_pm25"),
+                        round(avg("no2"), 2).alias("avg_no2"),
+                        count("*").alias("record_count"))
                 .orderBy("region", "province");
         provinceDf.show(34, false);
 
@@ -144,30 +173,57 @@ public class BatchWeatherAnalytics {
         // Saving the output partitioned by Region heavily optimizes future querying!
         System.out.println("Saving analytical results via Partitioning...");
         String outputPath = "hdfs://namenode:9000/user/data/processed/weather_historical.parquet";
-        
+
         try {
             transformedDf.write()
-                .mode("overwrite")
-                .partitionBy("region", "date") // Requirement 4: Partitioning
-                .parquet(outputPath);
+                    .mode("overwrite")
+                    .partitionBy("region", "date") // Requirement 4: Partitioning
+                    .parquet(outputPath);
             System.out.println("Saved successfully to " + outputPath);
         } catch (Exception e) {
             System.out.println("Could not save to Parquet. Error: " + e.getMessage());
         }
-
+        /*
+         * Không có partitionBy — tất cả trong 1 thư mục
+         * weather_historical.parquet/
+         * ├── part-00000.parquet ← tất cả data của North + Central + South trộn lẫn
+         * ├── part-00001.parquet
+         * └── part-00002.parquet
+         * Khi query WHERE region = 'North' → Spark phải đọc hết tất cả file rồi lọc →
+         * chậm.
+         * 
+         * Với .partitionBy("region", "date") — tổ chức thành thư mục con
+         * weather_historical.parquet/
+         * ├── region=North/
+         * │ ├── date=2025-05-01/
+         * │ │ └── part-00000.parquet ← chỉ data North ngày 01
+         * │ ├── date=2025-05-02/
+         * │ │ └── part-00000.parquet
+         * │ └── date=2025-05-03/
+         * │ └── part-00000.parquet
+         * ├── region=Central/
+         * │ ├── date=2025-05-01/
+         * │ │ └── part-00000.parquet
+         * │ └── ...
+         * └── region=South/
+         * └── ...
+         * Spark bỏ qua hoàn toàn các thư mục không liên quan — gọi là Partition Pruning.
+         */
+        
         // --- LAMBDA ARCHITECTURE: SERVING LAYER ---
-        // Writing the Batch views to MongoDB so they can be queried alongside the Speed Layer
+        // Writing the Batch views to MongoDB so they can be queried alongside the Speed
+        // Layer
         System.out.println("Pushing Batch Aggregations to MongoDB (Serving Layer)...");
 
         // Collection 1: Region-level pivot (avg PM2.5 per region per date)
-        try {
+        try {   
             pivotedDf.write()
-                .format("mongo")
-                .mode("overwrite")
-                .option("spark.mongodb.output.uri", "mongodb+srv://tuyen:tuyen@cluster0.tkzrw9q.mongodb.net/")
-                .option("spark.mongodb.output.database", "Big_Data")
-                .option("spark.mongodb.output.collection", "BatchHistoricalAggregations")
-                .save();
+                    .format("mongo")
+                    .mode("overwrite")
+                    .option("spark.mongodb.output.uri", "mongodb+srv://tuyen:tuyen@cluster0.tkzrw9q.mongodb.net/")
+                    .option("spark.mongodb.output.database", "Big_Data")
+                    .option("spark.mongodb.output.collection", "BatchHistoricalAggregations")
+                    .save();
             System.out.println("Successfully pushed Region Pivot to MongoDB!");
         } catch (Exception e) {
             System.out.println("Could not save Region Pivot to MongoDB. Error: " + e.getMessage());
@@ -176,12 +232,12 @@ public class BatchWeatherAnalytics {
         // Collection 2: Province-level stats (all 34 stations)
         try {
             provinceDf.write()
-                .format("mongo")
-                .mode("overwrite")
-                .option("spark.mongodb.output.uri", "mongodb+srv://tuyen:tuyen@cluster0.tkzrw9q.mongodb.net/")
-                .option("spark.mongodb.output.database", "Big_Data")
-                .option("spark.mongodb.output.collection", "ProvinceAggregations")
-                .save();
+                    .format("mongo")
+                    .mode("overwrite")
+                    .option("spark.mongodb.output.uri", "mongodb+srv://tuyen:tuyen@cluster0.tkzrw9q.mongodb.net/")
+                    .option("spark.mongodb.output.database", "Big_Data")
+                    .option("spark.mongodb.output.collection", "ProvinceAggregations")
+                    .save();
             System.out.println("Successfully pushed Province Aggregations (34 stations) to MongoDB!");
         } catch (Exception e) {
             System.out.println("Could not save Province Aggregations to MongoDB. Error: " + e.getMessage());
