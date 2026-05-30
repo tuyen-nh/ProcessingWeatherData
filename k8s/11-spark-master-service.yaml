@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-master
+  namespace: bigdata
+spec:
+  selector:
+    app: spark-master
+  type: NodePort
+  ports:
+    - name: webui
+      port: 8080
+      targetPort: 8080
+      nodePort: 30808   # Spark UI: http://<minikube-ip>:30808
+    - name: rpc
+      port: 7077
+      targetPort: 7077

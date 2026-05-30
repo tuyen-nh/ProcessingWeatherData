@@ -1,0 +1,34 @@
+# Headless service — each broker gets its own stable DNS name:
+#   kafka-0.kafka-headless.bigdata.svc.cluster.local
+#   kafka-1.kafka-headless.bigdata.svc.cluster.local
+#   kafka-2.kafka-headless.bigdata.svc.cluster.local
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-headless
+  namespace: bigdata
+spec:
+  clusterIP: None
+  selector:
+    app: kafka
+  ports:
+    - port: 29092
+      name: internal
+    - port: 9092
+      name: external
+---
+# NodePort — optional external access for debugging tools
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: bigdata
+spec:
+  selector:
+    app: kafka
+  type: NodePort
+  ports:
+    - name: broker
+      port: 9092
+      targetPort: 9092
+      nodePort: 30092

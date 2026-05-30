@@ -1,0 +1,26 @@
+# Headless service — lets Kafka pods discover Zookeeper by DNS
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper-headless
+  namespace: bigdata
+spec:
+  clusterIP: None
+  selector:
+    app: zookeeper
+  ports:
+    - port: 2181
+      name: client
+---
+# ClusterIP service — standard internal access (kafka dials "zookeeper:2181")
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper
+  namespace: bigdata
+spec:
+  selector:
+    app: zookeeper
+  ports:
+    - port: 2181
+      name: client

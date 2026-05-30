@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: datanode-headless
+  namespace: bigdata
+spec:
+  clusterIP: None    # headless — each pod gets own DNS: datanode-0, datanode-1, datanode-2
+  selector:
+    app: datanode
+  ports:
+    - port: 9866
+      name: data
