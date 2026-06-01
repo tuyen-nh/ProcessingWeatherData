@@ -55,12 +55,19 @@ public class BatchWeatherAnalytics {
                     "No historical CSV dataset found on HDFS at /user/data/raw/weather_data/ (" + e.getMessage() + ")");
         }
 
+        // Cửa sổ 30 ngày gần nhất (rolling window)
+        String yesterday = java.time.LocalDate.now().minusDays(1).toString();
+        String thirtyDaysAgo = java.time.LocalDate.now().minusDays(30).toString();
+        System.out.println("Processing 30-day window: " + thirtyDaysAgo + " → " + yesterday);
+
         Dataset<Row> streamedDf = null;
         try {
             System.out.println("Attempting to load streaming Parquet dataset from HDFS...");
             streamedDf = spark.read()
-                    // The path where KafkaToHDFSDumper writes new Parquet data
-                    .parquet("hdfs://namenode:9000/user/data/raw/weather_data_stream/");
+                    // Partition pruning: Spark chỉ đọc các thư mục date= trong khoảng 30 ngày
+                    // Bỏ qua toàn bộ data cũ hơn 30 ngày → hiệu quả dù HDFS có năm trước
+                    .parquet("hdfs://namenode:9000/user/data/raw/weather_data_stream/")
+                    .filter(col("date").geq(thirtyDaysAgo).and(col("date").leq(yesterday)));
         } catch (Exception e) {
             System.out.println("No streaming Parquet dataset found on HDFS at /user/data/raw/weather_data_stream/ ("
                     + e.getMessage() + ")");
@@ -148,18 +155,21 @@ public class BatchWeatherAnalytics {
          */
         transformedDf.show();
 
-        // Requirement 1: Complex Aggregation — Per-Province Stats (all 34 stations)
-        System.out.println("--- Per-Province Analytics (34 Stations) ---");
+        // Requirement 1: Complex Aggregation — Per-Province Daily Stats (all 34 stations)
+        // Thêm "date" vào groupBy → mỗi dòng = thống kê 1 ngày của 1 tỉnh
+        // Thực tế hơn: theo dõi xu hướng theo ngày thay vì all-time average
+        System.out.println("--- Per-Province Daily Analytics (34 Stations) for: " + yesterday + " ---");
         Dataset<Row> provinceDf = transformedDf
-                .groupBy("station_id", "province", "region")
+                .groupBy("date", "station_id", "province", "region")
                 .agg(
                         round(avg("temperature"), 1).alias("avg_temp"),
                         round(max("temperature"), 1).alias("max_temp"),
+                        round(min("temperature"), 1).alias("min_temp"),
                         round(avg("humidity"), 1).alias("avg_humidity"),
                         round(avg("pm25"), 2).alias("avg_pm25"),
                         round(avg("no2"), 2).alias("avg_no2"),
                         count("*").alias("record_count"))
-                .orderBy("region", "province");
+                .orderBy("date", "region", "province");
         provinceDf.show(34, false);
 
         // Requirement 1: Complex Aggregation (Pivot)
@@ -172,7 +182,7 @@ public class BatchWeatherAnalytics {
 
         pivotedDf.show();
 
-        // Requirement 4: Partition Pruning and Bucketing
+        // Requirement 4: Partition Pruning 
         // Saving the output partitioned by Region heavily optimizes future querying!
         System.out.println("Saving analytical results via Partitioning...");
         String outputPath = "hdfs://namenode:9000/user/data/processed/weather_historical.parquet";
@@ -237,12 +247,15 @@ public class BatchWeatherAnalytics {
         try {
             provinceDf.write()
                     .format("mongo")
+                    // overwrite: xóa collection cũ và ghi lại 30 ngày gần nhất
+                    // Mỗi lần batch chạy → MongoDB luôn có đúng 30 ngày mới nhất
+                    // Không bị duplicate, không phình to ứ theo năm
                     .mode("overwrite")
                     .option("spark.mongodb.output.uri", "mongodb+srv://tuyen:tuyen@cluster0.tkzrw9q.mongodb.net/")
                     .option("spark.mongodb.output.database", "Big_Data")
                     .option("spark.mongodb.output.collection", "ProvinceAggregations")
                     .save();
-            System.out.println("Successfully pushed Province Aggregations (34 stations) to MongoDB!");
+            System.out.println("Successfully pushed Province Aggregations 30-day window to MongoDB!");
         } catch (Exception e) {
             System.out.println("Could not save Province Aggregations to MongoDB. Error: " + e.getMessage());
         }
