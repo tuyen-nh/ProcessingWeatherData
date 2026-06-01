@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { useCity } from '../context/CityContext.jsx'
-import { getCompare } from '../api/client.js'
+import { getCompare, SPEED_POLL_MS } from '../api/client.js'
 import { useFetch } from '../hooks/useFetch.js'
 import DeviationStat from '../components/DeviationStat.jsx'
 import { Loader, ErrorBox } from '../components/Loader.jsx'
@@ -8,7 +8,7 @@ import { Loader, ErrorBox } from '../components/Loader.jsx'
 export default function Compare() {
   const { t } = useTranslation()
   const { cityId } = useCity()
-  const { data, loading, error } = useFetch(() => getCompare(cityId), [cityId])
+  const { data, loading, error } = useFetch(() => getCompare(cityId), [cityId], { pollMs: SPEED_POLL_MS })
 
   if (loading) return <Loader label={t('compare.loading')} />
   if (error) return <ErrorBox error={error} />

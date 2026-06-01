@@ -1,43 +1,95 @@
 const mongoose = require('mongoose');
 
-// ──────────────────────────────────────────────
-// Speed Layer: dữ liệu real-time từ Kafka/Spark
-// ──────────────────────────────────────────────
-const WeatherRealtimeSchema = new mongoose.Schema({
-    city_id:    { type: Number, required: true, index: true },
-    city_name:  { type: String, required: true },
-    temp:       { type: Number },          // nhiệt độ (°C)
-    humidity:   { type: Number },          // độ ẩm (%)
-    aqi_value:  { type: Number },          // chỉ số AQI tổng hợp
-    pm25:       { type: Number },          // µg/m³
-    pm10:       { type: Number },
-    co:         { type: Number },
-    no2:        { type: Number },
-    so2:        { type: Number },
-    o3:         { type: Number },
-    is_anomaly: { type: Boolean, default: false },  // Spark Streaming đánh dấu
-    timestamp:  { type: Date, default: Date.now, index: true }
-}, { collection: 'weather_realtime' });
+// ============================================================================
+// Schemas mirror EXACTLY what the Spark jobs write to MongoDB (DB: Big_Data).
+// Keys are station_id (e.g. "HN01") + province + region — NOT city_id.
+// strict:false keeps any extra columns Spark emits (e.g. window struct).
+// ============================================================================
 
-// ──────────────────────────────────────────────
-// Batch Layer: dữ liệu lịch sử đã tổng hợp (Spark Batch)
-// ──────────────────────────────────────────────
-const WeatherHistoricalSchema = new mongoose.Schema({
-    city_id:    { type: Number, required: true, index: true },
-    city_name:  { type: String, required: true },
-    year:       { type: Number },
-    month:      { type: Number, index: true },   // 1–12
-    day:        { type: Number },
-    avg_temp:   { type: Number },
-    min_temp:   { type: Number },
-    max_temp:   { type: Number },
-    avg_aqi:    { type: Number },
-    avg_pm25:   { type: Number },
-    avg_pm10:   { type: Number },
+// ── Speed Layer: per-station real-time readings (StreamingAQI.realtimeAlerts) ──
+const RealTimeReadingSchema = new mongoose.Schema({
+    station_id:  { type: String, index: true },
+    province:    { type: String, index: true },
+    region:      { type: String, index: true },
+    date:        { type: String },
+    timestamp:   { type: Date, index: true },
+    pm25:        { type: Number },
+    temperature: { type: Number },
+    humidity:    { type: Number },
+    no2:         { type: Number },
+    aqi_index:   { type: Number },
+    aqi_alert:   { type: String },   // Good | Moderate | ... | Hazardous
+    temp_alert:  { type: String }    // Too Cold | Normal | Hot | Extreme Heat
+}, { collection: 'RealTimeReadings', strict: false });
+
+// ── Speed Layer: 15-min windowed averages per province (StreamingAQI.finalAggregations) ──
+const StreamAvgSchema = new mongoose.Schema({
+    window:       { type: mongoose.Schema.Types.Mixed },  // { start, end }
+    province:     { type: String, index: true },
+    avg_pm25:     { type: Number },
+    peak_pm25:    { type: Number },
+    avg_temp:     { type: Number },
+    avg_humidity: { type: Number },
+    avg_no2:      { type: Number },
+    aqi_index:    { type: Number }
+}, { collection: 'AQIStream_avg', strict: false });
+
+// ── Batch Layer: per-station aggregates over full history (BatchWeatherAnalytics.provinceDf) ──
+const ProvinceAggregationSchema = new mongoose.Schema({
+    station_id:   { type: String, index: true },
+    province:     { type: String, index: true },
+    region:       { type: String, index: true },
+    avg_temp:     { type: Number },
+    max_temp:     { type: Number },
+    avg_humidity: { type: Number },
+    avg_pm25:     { type: Number },
+    avg_no2:      { type: Number },
     record_count: { type: Number }
-}, { collection: 'weather_historical' });
+}, { collection: 'ProvinceAggregations', strict: false });
 
-const WeatherRealtime   = mongoose.model('WeatherRealtime',   WeatherRealtimeSchema);
-const WeatherHistorical = mongoose.model('WeatherHistorical', WeatherHistoricalSchema);
+// ── Batch Layer: avg PM2.5 pivoted by region per date (BatchWeatherAnalytics.pivotedDf) ──
+// Columns are dynamic region names (North / Central / South) → strict:false.
+const BatchHistoricalSchema = new mongoose.Schema({
+    date: { type: String, index: true }
+}, { collection: 'BatchHistoricalAggregations', strict: false });
 
-module.exports = { WeatherRealtime, WeatherHistorical };
+// ── History: per-station hourly readings for a recent day (seedDay.js) ──
+// Drives the Realtime page's 0:00→23:59 day-timeline chart. Separate from
+// RealTimeReadings, which stays reserved for the live Kafka feed.
+const HourlyReadingSchema = new mongoose.Schema({
+    station_id:  { type: String, index: true },
+    province:    { type: String, index: true },
+    region:      { type: String, index: true },
+    date:        { type: String, index: true },  // YYYY-MM-DD
+    timestamp:   { type: Date, index: true },     // 2026-06-01THH:00 (UTC)
+    hour:        { type: Number },                // 0–23
+    temperature: { type: Number },
+    humidity:    { type: Number },
+    pm25:        { type: Number },
+    no2:         { type: Number },
+    aqi_index:   { type: Number }
+}, { collection: 'weather_hourly', strict: false });
+
+// ── History: per-station daily aggregates over recent days (seedDay.js) ──
+// Drives the History page's daily temp/AQI charts.
+const DailyReadingSchema = new mongoose.Schema({
+    station_id:    { type: String, index: true },
+    province:      { type: String, index: true },
+    region:        { type: String, index: true },
+    date:          { type: String, index: true },  // YYYY-MM-DD
+    avg_temp:      { type: Number },
+    max_temp:      { type: Number },
+    min_temp:      { type: Number },
+    avg_pm25:      { type: Number },
+    avg_aqi:       { type: Number },
+    peak_aqi_hour: { type: Number }                 // hour 0–23 of max hourly AQI
+}, { collection: 'weather_daily', strict: false });
+
+module.exports = {
+    RealTimeReading:     mongoose.model('RealTimeReading',     RealTimeReadingSchema),
+    StreamAvg:           mongoose.model('StreamAvg',           StreamAvgSchema),
+    ProvinceAggregation: mongoose.model('ProvinceAggregation', ProvinceAggregationSchema),
+    BatchHistorical:     mongoose.model('BatchHistorical',     BatchHistoricalSchema),
+    HourlyReading:       mongoose.model('HourlyReading',       HourlyReadingSchema),
+    DailyReading:        mongoose.model('DailyReading',        DailyReadingSchema)
+};

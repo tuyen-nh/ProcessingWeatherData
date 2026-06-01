@@ -38,3 +38,5 @@ export const CITIES = [
 ]
 
 export const cityById = (id) => CITIES.find((c) => c.city_id === Number(id))
+// API returns `province`, which matches city_name here (e.g. "Ha Noi").
+export const cityByName = (name) => CITIES.find((c) => c.city_name === name)

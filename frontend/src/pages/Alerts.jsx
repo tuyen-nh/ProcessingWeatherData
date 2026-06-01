@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getAlerts } from '../api/client.js'
+import { getAlerts, SPEED_POLL_MS } from '../api/client.js'
 import { useFetch } from '../hooks/useFetch.js'
 import { fmt, fmtTime } from '../utils/aqi.js'
 import { Loader, ErrorBox, Empty } from '../components/Loader.jsx'
@@ -14,7 +14,7 @@ const TYPE_STYLE = {
 export default function Alerts() {
   const { t } = useTranslation()
   const [onlyAnomaly, setOnlyAnomaly] = useState(false)
-  const { data, loading, error } = useFetch(() => getAlerts(), [])
+  const { data, loading, error } = useFetch(() => getAlerts(), [], { pollMs: SPEED_POLL_MS })
 
   if (loading) return <Loader label={t('alerts.loading')} />
   if (error) return <ErrorBox error={error} />

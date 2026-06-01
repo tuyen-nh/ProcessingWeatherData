@@ -1,17 +1,18 @@
 import { useTranslation } from 'react-i18next'
 import { useCity } from '../context/CityContext.jsx'
-import { getRealtime } from '../api/client.js'
+import { getRealtime, SPEED_POLL_MS } from '../api/client.js'
 import { useFetch } from '../hooks/useFetch.js'
 import { fmt, fmtTime } from '../utils/aqi.js'
 import MetricCard from '../components/MetricCard.jsx'
 import AqiGauge from '../components/AqiGauge.jsx'
 import AnomalyBadge from '../components/AnomalyBadge.jsx'
+import RealtimeTrendChart from '../components/RealtimeTrendChart.jsx'
 import { Loader, ErrorBox } from '../components/Loader.jsx'
 
 export default function RealtimeDashboard() {
   const { t } = useTranslation()
   const { cityId } = useCity()
-  const { data, loading, error } = useFetch(() => getRealtime(cityId), [cityId])
+  const { data, loading, error } = useFetch(() => getRealtime(cityId), [cityId], { pollMs: SPEED_POLL_MS })
 
   if (loading) return <Loader label={t('realtime.loading')} />
   if (error) return <ErrorBox error={error} />
@@ -39,6 +40,8 @@ export default function RealtimeDashboard() {
           <MetricCard label={t('metric.category')} value={data.aqi_category} accent="#e8a04b" delay={300} sub={t('realtime.epa')} />
         </div>
       </div>
+
+      <RealtimeTrendChart cityId={cityId} />
     </div>
   )
 }
