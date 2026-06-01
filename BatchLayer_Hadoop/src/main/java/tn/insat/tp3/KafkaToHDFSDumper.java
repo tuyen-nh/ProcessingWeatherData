@@ -47,6 +47,7 @@ public class KafkaToHDFSDumper {
                 .format("parquet")
                 .option("path", "hdfs://namenode:9000/user/data/raw/weather_data_stream/")
                 .option("checkpointLocation", "hdfs://namenode:9000/checkpoints/hdfs_dumper")
+                .partitionBy("date")
                 .trigger(Trigger.ProcessingTime("1 minute"))
                 .start();
 

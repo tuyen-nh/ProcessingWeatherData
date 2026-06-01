@@ -108,7 +108,10 @@ public class BatchWeatherAnalytics {
         // for this
         // Broadcast join: copy the small data to all worker nodes
         // Sort-Merge join: sort the large data and merge the two sorted datasets
-        Dataset<Row> enrichedDf = weatherDf.join(stationsDf, "station_id");
+        // Dataset<Row> enrichedDf = weatherDf.join(stationsDf, "station_id");
+        Dataset<Row> enrichedDf = weatherDf.join(stationsDf,
+                weatherDf.col("station_id").equalTo(stationsDf.col("station_id")),
+                "left");
 
         // Complex Multi-stage Transformation (Req 2)
         Dataset<Row> transformedDf = enrichedDf
@@ -207,16 +210,17 @@ public class BatchWeatherAnalytics {
          * │ └── ...
          * └── region=South/
          * └── ...
-         * Spark bỏ qua hoàn toàn các thư mục không liên quan — gọi là Partition Pruning.
+         * Spark bỏ qua hoàn toàn các thư mục không liên quan — gọi là Partition
+         * Pruning.
          */
-        
+
         // --- LAMBDA ARCHITECTURE: SERVING LAYER ---
         // Writing the Batch views to MongoDB so they can be queried alongside the Speed
         // Layer
         System.out.println("Pushing Batch Aggregations to MongoDB (Serving Layer)...");
 
         // Collection 1: Region-level pivot (avg PM2.5 per region per date)
-        try {   
+        try {
             pivotedDf.write()
                     .format("mongo")
                     .mode("overwrite")

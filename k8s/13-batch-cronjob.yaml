@@ -1,0 +1,50 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: batch-weather-analytics
+  namespace: bigdata
+spec:
+  # Chạy mỗi ngày lúc 1:00 AM
+  schedule: "0 1 * * *"
+
+  # Không cho phép 2 job chạy cùng lúc (nếu job trước chưa xong)
+  concurrencyPolicy: Forbid
+
+  # Giữ lại log của 3 lần chạy gần nhất để debug
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+
+  jobTemplate:
+    spec:
+      # Tự retry nếu fail (tối đa 2 lần)
+      backoffLimit: 2
+
+      template:
+        spec:
+          restartPolicy: OnFailure
+
+          containers:
+            - name: spark-batch
+              # Dùng cùng image với spark-master trong project
+              image: spark:3.5.8-scala2.12-java11-ubuntu
+
+              command:
+                - /opt/spark/bin/spark-submit
+                - --master
+                - spark://spark-master.bigdata.svc.cluster.local:7077
+                - --deploy-mode
+                - client
+                - --packages
+                - org.mongodb.spark:mongo-spark-connector_2.12:3.0.1
+                - --class
+                - tn.insat.tp3.BatchWeatherAnalytics
+                - /opt/spark/app.jar
+
+              # Giới hạn tài nguyên
+              resources:
+                requests:
+                  memory: "1Gi"
+                  cpu: "500m"
+                limits:
+                  memory: "2Gi"
+                  cpu: "1000m"

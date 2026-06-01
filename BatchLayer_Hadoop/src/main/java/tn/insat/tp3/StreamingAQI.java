@@ -91,6 +91,8 @@ public class StreamingAQI {
                                                 round(avg("pm25"), 2).alias("avg_pm25"),
                                                 max("pm25").alias("peak_pm25"),
                                                 round(avg("temperature"), 2).alias("avg_temp"),
+                                                max("temperature").alias("max_temp"),
+                                                min("temperature").alias("min_temp"),
                                                 round(avg("humidity"), 2).alias("avg_humidity"),
                                                 round(avg("no2"), 2).alias("avg_no2"));
 
