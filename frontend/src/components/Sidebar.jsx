@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 const LINKS = [
   { to: '/', key: 'nav.realtime', code: '01', end: true },
   { to: '/history', key: 'nav.history', code: '02' },
-  { to: '/compare', key: 'nav.compare', code: '03' },
+  { to: '/provinces', key: 'nav.provinces', code: '03' },
   { to: '/alerts', key: 'nav.alerts', code: '04' },
   { to: '/stats', key: 'nav.national', code: '05' },
 ]

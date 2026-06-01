@@ -3,7 +3,7 @@
 // the components, so each get* function adapts the response back into the shape
 // the UI already expects. Flip USE_MOCK to true to fall back to mock generators.
 import { mockRealtime, mockHistory, mockCompare, mockAlerts, mockStats } from './mock.js'
-import { cityById, cityByName } from '../data/cities.js'
+import { cityById, cityByName, CITIES } from '../data/cities.js'
 import { aqiCategory, pm25ToAQI } from '../utils/aqi.js'
 
 export const USE_MOCK = false
@@ -44,6 +44,55 @@ async function realRealtime(cityId) {
     is_anomaly: ANOMALY_AQI.includes(d.aqi_alert) || ANOMALY_TEMP.includes(d.temp_alert),
     timestamp: d.timestamp,
   }
+}
+
+// ── Realtime (all): GET /realtime → latest reading per station (~34 rows) ──
+// Powers the all-provinces table. No station_id → one doc per station, newest.
+async function realRealtimeAll() {
+  const arr = await real('/realtime')
+  return arr.map((d) => ({
+    station_id: d.station_id,
+    province: d.province,
+    region: d.region,
+    temp: d.temperature,
+    humidity: d.humidity,
+    pm2_5: d.pm25,
+    no2: d.no2,
+    aqi_value: d.aqi_index,
+    aqi_category: aqiCategory(d.aqi_index),
+    aqi_alert: d.aqi_alert,
+    temp_alert: d.temp_alert,
+    is_anomaly: ANOMALY_AQI.includes(d.aqi_alert) || ANOMALY_TEMP.includes(d.temp_alert),
+    timestamp: d.timestamp,
+  }))
+}
+
+// temp_alert mirrors StreamingAQI.java thresholds (<10 / ≤35 / ≤40 / >40).
+function tempAlertOf(temp) {
+  if (temp == null) return 'Normal'
+  if (temp < 10) return 'Too Cold'
+  if (temp <= 35) return 'Normal'
+  if (temp <= 40) return 'Hot'
+  return 'Extreme Heat'
+}
+
+// Mock fallback: one synthesized snapshot per known city.
+function mockRealtimeAll() {
+  return CITIES.map((c) => {
+    const r = mockRealtime(c.city_id)
+    return {
+      ...r,
+      station_id: c.station_id,
+      region: c.region,
+      province: c.city_name,
+      aqi_alert: r.aqi_category, // mock category strings match aqi_alert bands
+      temp_alert: tempAlertOf(r.temp),
+    }
+  })
+}
+
+export function getRealtimeAll() {
+  return USE_MOCK ? delay(mockRealtimeAll()) : realRealtimeAll()
 }
 
 // ── History: GET /daily?station_id=&start_date=&end_date= → per-day rows ──
