@@ -46,3 +46,38 @@ https://www.weatherapi.com/my/fields.aspx
 
 
 mongodb+srv://tuyen:tuyen@cluster0.tkzrw9q.mongodb.net/Big_Data?appName=Cluster0
+
+---
+
+## 📊 System Configuration (K8s)
+
+### 🟠 Kafka — `k8s/08-kafka-statefulset.yaml`
+
+| Parameter                        | Value                                            |
+|----------------------------------|--------------------------------------------------|
+| **Number of Brokers**            | **3** (replicas: 3 → kafka-0, kafka-1, kafka-2) |
+| **Default Partitions per Topic** | **3** (KAFKA_NUM_PARTITIONS: "3")              |
+| **Default Replication Factor**   | 2 (KAFKA_DEFAULT_REPLICATION_FACTOR: "2")      |
+| **Offsets Topic Replication**    | 3 (KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "3")|
+| **Storage per Broker**           | 5Gi                                              |
+
+> Each broker automatically gets its ID from the pod name (`kafka-0` → ID 0, `kafka-1` → ID 1, `kafka-2` → ID 2)
+
+---
+
+### ⚡ Spark — `k8s/10-spark-master-deployment.yaml` & `k8s/12-spark-worker-deployment.yaml`
+
+| Component         | Count | Resources                             |
+|-------------------|-------|---------------------------------------|
+| **Spark Master**  | 1     | —                                     |
+| **Spark Workers** | **2** (`replicas: 2`) | RAM: 1–2Gi / CPU: 0.5–1 core each |
+
+---
+
+### 🗂️ Quick Summary
+
+```
+Kafka:   3 brokers  |  3 partitions (default)  |  replication factor = 2
+Spark:   1 master   |  2 workers
+```
+
