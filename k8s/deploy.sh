@@ -24,12 +24,18 @@ echo "==> kafka"
 kubectl apply -f $D/08-kafka-statefulset.yaml -f $D/09-kafka-service.yaml
 kubectl wait --for=condition=ready pod/kafka-0 -n $NS --timeout=240s
 
+echo "==> spark app jar PVC"
+kubectl apply -f $D/09b-spark-app-pvc.yaml
+
 echo "==> spark master"
 kubectl apply -f $D/10-spark-master-deployment.yaml -f $D/11-spark-master-service.yaml
 kubectl wait --for=condition=ready pod -l app=spark-master -n $NS --timeout=180s
 
 echo "==> spark workers"
 kubectl apply -f $D/12-spark-worker-deployment.yaml
+
+echo "==> batch cronjob (runs BatchWeatherAnalytics daily at 1AM)"
+kubectl apply -f $D/13-batch-cronjob.yaml
 
 echo "==> done. Watch pods:"
 kubectl get pods -n $NS

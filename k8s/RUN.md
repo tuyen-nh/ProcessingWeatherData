@@ -29,7 +29,7 @@ POD=$(kubectl get pod -n bigdata -l app=spark-master -o jsonpath='{.items[0].met
 
 ## 5. Start the Producer (terminal A — leave running)
 ```bash
-kubectl exec -it $POD -n bigdata -- java -cp /opt/spark/app.jar tn.insat.tp3.ApiToKafkaProducer
+kubectl exec -it $POD -n bigdata -- java -cp /opt/spark/app/app.jar tn.insat.tp3.ApiToKafkaProducer
 ```
 
 ## 6. Start streaming jobs (each in its own terminal)
@@ -37,21 +37,31 @@ kubectl exec -it $POD -n bigdata -- java -cp /opt/spark/app.jar tn.insat.tp3.Api
 # terminal B — Kafka -> HDFS parquet
 kubectl exec -it $POD -n bigdata -- /opt/spark/bin/spark-submit \
   --master spark://spark-master:7077 --deploy-mode client \
-  --class tn.insat.tp3.KafkaToHDFSDumper /opt/spark/app.jar
+  --class tn.insat.tp3.KafkaToHDFSDumper /opt/spark/app/app.jar
 
 # terminal C — Kafka -> AQI -> MongoDB
 kubectl exec -it $POD -n bigdata -- /opt/spark/bin/spark-submit \
   --master spark://spark-master:7077 --deploy-mode client \
   --packages org.mongodb.spark:mongo-spark-connector_2.12:3.0.1 \
-  --class tn.insat.tp3.StreamingAQI /opt/spark/app.jar
+  --class tn.insat.tp3.StreamingAQI /opt/spark/app/app.jar
 ```
 
 ## 7. Batch analytics (run after parquet exists in HDFS)
+> Also runs automatically every day at 1 AM via the `batch-weather-analytics`
+> CronJob (k8s/13-batch-cronjob.yaml) — this manual run is optional/on-demand.
+> The CronJob reads the same jar from the `spark-app-jar` PVC, so step 3
+> (load-and-run.sh) must have populated it first.
+> Check / trigger manually:
+> ```bash
+> kubectl get cronjob -n bigdata
+> kubectl create job -n bigdata --from=cronjob/batch-weather-analytics batch-test
+> kubectl logs -n bigdata job/batch-test -f
+> ```
 ```bash
 kubectl exec -it $POD -n bigdata -- /opt/spark/bin/spark-submit \
   --master spark://spark-master:7077 --deploy-mode client \
   --packages org.mongodb.spark:mongo-spark-connector_2.12:3.0.1 \
-  --class tn.insat.tp3.BatchWeatherAnalytics /opt/spark/app.jar
+  --class tn.insat.tp3.BatchWeatherAnalytics /opt/spark/app/app.jar
 ```
 
 ## 8. Open the web UIs
@@ -175,8 +185,10 @@ kubectl apply -f k8s/02-zookeeper-statefulset.yaml -f k8s/03-zookeeper-service.y
 kubectl apply -f k8s/04-namenode-statefulset.yaml  -f k8s/05-namenode-service.yaml
 kubectl apply -f k8s/06-datanode-statefulset.yaml  -f k8s/07-datanode-service.yaml
 kubectl apply -f k8s/08-kafka-statefulset.yaml     -f k8s/09-kafka-service.yaml
+kubectl apply -f k8s/09b-spark-app-pvc.yaml
 kubectl apply -f k8s/10-spark-master-deployment.yaml -f k8s/11-spark-master-service.yaml
 kubectl apply -f k8s/12-spark-worker-deployment.yaml
+kubectl apply -f k8s/13-batch-cronjob.yaml
 ```
 
 Watch until all pods say `Running`:
@@ -211,7 +223,7 @@ kubectl exec namenode-0 -n bigdata -- hdfs dfs -put -f /tmp/export.csv /user/dat
 
 # Copy JAR into spark-master pod
 $POD = kubectl get pod -n bigdata -l app=spark-master -o jsonpath='{.items[0].metadata.name}'
-kubectl cp "BatchLayer_Hadoop/target/batch-layer-hadoop-1.0-SNAPSHOT.jar" bigdata/${POD}:/opt/spark/app.jar
+kubectl cp "BatchLayer_Hadoop/target/batch-layer-hadoop-1.0-SNAPSHOT.jar" bigdata/${POD}:/opt/spark/app/app.jar
 ```
 
 ---
@@ -228,7 +240,7 @@ echo $POD
 ## STEP 6 — Start Producer (Terminal A — keep running)
 
 ```powershell
-kubectl exec -it $POD -n bigdata -- java -cp /opt/spark/app.jar tn.insat.tp3.ApiToKafkaProducer
+kubectl exec -it $POD -n bigdata -- java -cp /opt/spark/app/app.jar tn.insat.tp3.ApiToKafkaProducer
 ```
 
 ---
@@ -239,7 +251,7 @@ kubectl exec -it $POD -n bigdata -- java -cp /opt/spark/app.jar tn.insat.tp3.Api
 ```powershell
 kubectl exec -it $POD -n bigdata -- /opt/spark/bin/spark-submit `
   --master spark://spark-master:7077 --deploy-mode client `
-  --class tn.insat.tp3.KafkaToHDFSDumper /opt/spark/app.jar
+  --class tn.insat.tp3.KafkaToHDFSDumper /opt/spark/app/app.jar
 ```
 
 **Terminal C — Kafka → AQI → MongoDB (speed layer):**
@@ -247,7 +259,7 @@ kubectl exec -it $POD -n bigdata -- /opt/spark/bin/spark-submit `
 kubectl exec -it $POD -n bigdata -- /opt/spark/bin/spark-submit `
   --master spark://spark-master:7077 --deploy-mode client `
   --packages org.mongodb.spark:mongo-spark-connector_2.12:3.0.1 `
-  --class tn.insat.tp3.StreamingAQI /opt/spark/app.jar
+  --class tn.insat.tp3.StreamingAQI /opt/spark/app/app.jar
 ```
 
 ---
@@ -258,7 +270,7 @@ kubectl exec -it $POD -n bigdata -- /opt/spark/bin/spark-submit `
 kubectl exec -it $POD -n bigdata -- /opt/spark/bin/spark-submit `
   --master spark://spark-master:7077 --deploy-mode client `
   --packages org.mongodb.spark:mongo-spark-connector_2.12:3.0.1 `
-  --class tn.insat.tp3.BatchWeatherAnalytics /opt/spark/app.jar
+  --class tn.insat.tp3.BatchWeatherAnalytics /opt/spark/app/app.jar
 ```
 
 ---
@@ -305,4 +317,4 @@ kubectl delete namespace bigdata    # deletes ALL pods + data
 
 ```
 $POD = kubectl get pod -n bigdata -l app=spark-master -o jsonpath='{.items[0].metadata.name}'
-kubectl exec -it $POD -n bigdata -- java -cp /opt/spark/app.jar tn.insat.tp3.ApiToKafkaProducer
+kubectl exec -it $POD -n bigdata -- java -cp /opt/spark/app/app.jar tn.insat.tp3.ApiToKafkaProducer

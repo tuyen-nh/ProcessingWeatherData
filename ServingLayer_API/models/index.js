@@ -8,6 +8,7 @@ const mongoose = require('mongoose');
 
 // ── Speed Layer: per-station real-time readings (StreamingAQI.realtimeAlerts) ──
 const RealTimeReadingSchema = new mongoose.Schema({
+    _id:         { type: String },   // = station_id (Spark override key); String, not ObjectId
     station_id:  { type: String, index: true },
     province:    { type: String, index: true },
     region:      { type: String, index: true },

@@ -142,7 +142,10 @@ public class BatchWeatherAnalytics {
         // Dataset<Row> enrichedDf = weatherDf.join(stationsDf, "station_id");
         Dataset<Row> enrichedDf = weatherDf.join(stationsDf,
                 weatherDf.col("station_id").equalTo(stationsDf.col("station_id")),
-                "left");
+                "left")
+                // equality-condition join keeps BOTH station_id columns → drop the
+                // stations-side copy so later references aren't AMBIGUOUS_REFERENCE.
+                .drop(stationsDf.col("station_id"));
 
         // Complex Multi-stage Transformation (Req 2)
         Dataset<Row> transformedDf = enrichedDf

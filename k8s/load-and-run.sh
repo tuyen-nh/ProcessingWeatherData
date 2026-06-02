@@ -20,6 +20,7 @@ if [ ! -f "$JAR" ]; then
   exit 1
 fi
 POD=$(kubectl get pod -n $NS -l app=spark-master -o jsonpath='{.items[0].metadata.name}')
-kubectl cp "$JAR" $NS/$POD:/opt/spark/app.jar
-echo "==> JAR in pod $POD at /opt/spark/app.jar"
+# /opt/spark/app is the spark-app-jar PVC, shared with the batch CronJob
+kubectl cp "$JAR" $NS/$POD:/opt/spark/app/app.jar
+echo "==> JAR in pod $POD at /opt/spark/app/app.jar (shared PVC)"
 echo "Now run jobs — see k8s/RUN.md"

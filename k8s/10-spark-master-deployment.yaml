@@ -31,9 +31,18 @@ spec:
               name: webui
             - containerPort: 7077
               name: rpc
+          volumeMounts:
+            # shared jar location — load-and-run.sh copies app.jar here; the
+            # batch CronJob mounts the same PVC and reads /opt/spark/app/app.jar
+            - name: app-jar
+              mountPath: /opt/spark/app
           readinessProbe:
             httpGet:
               path: /
               port: 8080
             initialDelaySeconds: 20
             periodSeconds: 10
+      volumes:
+        - name: app-jar
+          persistentVolumeClaim:
+            claimName: spark-app-jar

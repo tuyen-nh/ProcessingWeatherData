@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: spark-app-jar
+  namespace: bigdata
+spec:
+  # Single-node minikube: spark-master + the nightly cronjob pod co-locate, so
+  # both can mount this RWO claim. Multi-node would need ReadWriteMany.
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

@@ -34,11 +34,33 @@ spec:
                 - spark://spark-master.bigdata.svc.cluster.local:7077
                 - --deploy-mode
                 - client
+                # cronjob pod's user.home is /nonexistent → redirect Ivy's package
+                # cache to a writable dir so --packages can resolve
+                - --conf
+                - spark.jars.ivy=/tmp/.ivy2
+                # client-mode driver runs in THIS pod; advertise the pod IP so
+                # executors can connect back (the pod hostname isn't DNS-resolvable).
+                # k8s substitutes $(POD_IP) from the env var below.
+                - --conf
+                - spark.driver.host=$(POD_IP)
+                - --conf
+                - spark.driver.bindAddress=0.0.0.0
                 - --packages
                 - org.mongodb.spark:mongo-spark-connector_2.12:3.0.1
                 - --class
                 - tn.insat.tp3.BatchWeatherAnalytics
-                - /opt/spark/app.jar
+                - /opt/spark/app/app.jar
+
+              env:
+                - name: POD_IP
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: status.podIP
+
+              # JAR shared from spark-master via the spark-app-jar PVC
+              volumeMounts:
+                - name: app-jar
+                  mountPath: /opt/spark/app
 
               # Giới hạn tài nguyên
               resources:
@@ -48,3 +70,8 @@ spec:
                 limits:
                   memory: "2Gi"
                   cpu: "1000m"
+
+          volumes:
+            - name: app-jar
+              persistentVolumeClaim:
+                claimName: spark-app-jar
