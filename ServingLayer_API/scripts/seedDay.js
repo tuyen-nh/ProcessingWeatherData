@@ -1,24 +1,58 @@
-// One-shot flow: fetch a recent day of REAL hourly weather (Open-Meteo, no key)
-// for all 34 stations, re-stamp onto a full 2026-06-01 day (00:00→23:00 UTC),
-// and load into Mongo. Writes ONLY `weather_hourly` (day-timeline source) and
-// recomputes `ProvinceAggregations` (batch views). Leaves RealTimeReadings and
-// BatchHistoricalAggregations untouched.
+// One-shot flow: fetch 30 recent days of REAL hourly weather (Open-Meteo, no key)
+// for all 34 stations, re-stamp onto a 30-day window ending 2026-06-01, and load
+// into Mongo using ONLY the 4 collections the project defines:
+//
+//   RealTimeReadings           ← every hourly reading (30d × 24h × 34 stations).
+//                                Also the live Kafka feed's target; seeding it
+//                                means history persists even with streaming off.
+//   ProvinceAggregations       ← per-station averages over the whole window.
+//   BatchHistoricalAggregations← avg PM2.5 pivoted by region (North/Central/South)
+//                                per date.
+//   AQIStream_avg              ← left untouched (Spark Streaming windowed output).
+//
+// Also DROPS the now-redundant weather_hourly / weather_daily collections.
 //
 // Run:  npm run seed   (from ServingLayer_API/)
 require('dotenv').config();
 const mongoose = require('mongoose');
 const connectDb = require('../db');
-const { HourlyReading, DailyReading, ProvinceAggregation } = require('../models');
+const { RealTimeReading, ProvinceAggregation, BatchHistorical } = require('../models');
 
-const SEED_DATE = '2026-06-01';          // the day the seeded timeline reads as
+const SEED_DATE = '2026-06-01';          // newest day of the stamped window
 const SEED_Y = 2026, SEED_M = 5, SEED_D = 1; // month is 0-based for Date.UTC
-const NUM_DAYS = 30;                     // history depth (daily aggregates)
+const NUM_DAYS = 30;                     // history depth
 
 // Date string `daysAgo` days before SEED_DATE, e.g. daysAgo=0 → '2026-06-01'.
 function stampedDate(daysAgo) {
   const d = new Date(Date.UTC(SEED_Y, SEED_M, SEED_D));
   d.setUTCDate(d.getUTCDate() - daysAgo);
   return d.toISOString().slice(0, 10);
+}
+
+// UTC Date for a given day-offset + hour, used as the reading timestamp.
+function stampedTimestamp(daysAgo, hour) {
+  const d = new Date(Date.UTC(SEED_Y, SEED_M, SEED_D, hour, 0, 0));
+  d.setUTCDate(d.getUTCDate() - daysAgo);
+  return d;
+}
+
+// aqi_alert / temp_alert — ported EXACTLY from StreamingAQI.java so seeded
+// RealTimeReadings carry the same alert strings the streaming job would emit.
+function aqiAlert(aqi) {
+  if (aqi == null) return null;
+  if (aqi <= 50) return 'Good';
+  if (aqi <= 100) return 'Moderate';
+  if (aqi <= 150) return 'Unhealthy for Sensitive Groups';
+  if (aqi <= 200) return 'Unhealthy';
+  if (aqi <= 300) return 'Very Unhealthy';
+  return 'Hazardous';
+}
+function tempAlert(temp) {
+  if (temp == null) return null;
+  if (temp < 10) return 'Too Cold';
+  if (temp <= 35) return 'Normal';
+  if (temp <= 40) return 'Hot';
+  return 'Extreme Heat';
 }
 
 // 34 cities — matches frontend/src/data/cities.js (+ approximate province coords).
@@ -115,9 +149,9 @@ async function main() {
 
   const avg = (arr) => (arr.length ? arr.reduce((s, x) => s + x, 0) / arr.length : null);
 
-  const hourly = [];        // current day, 24h per station
-  const daily = [];         // last NUM_DAYS daily aggregates per station
-  const provinceRows = [];  // batch view, averaged over the window
+  const readings = [];      // → RealTimeReadings (every hour of every day)
+  const provinceRows = [];  // → ProvinceAggregations (per-station window avg)
+  const regionByDate = new Map(); // date → { North:[pm25...], Central:[...], South:[...] }
 
   STATIONS.forEach((st, i) => {
     // Merge all sources into one time → values map (prefer non-null).
@@ -145,7 +179,7 @@ async function main() {
 
     const readAt = (t) => merged.get(t) || {};
 
-    // Complete days = 24 hourly slots all with a non-null temperature.
+    // Complete days = 24 hourly slots all with a non-null temperature + pm25.
     const byDate = new Map();
     [...merged.keys()].sort().forEach((t) => {
       const day = t.slice(0, 10);
@@ -167,39 +201,35 @@ async function main() {
     recent.forEach((dayBlock, di) => {
       const daysAgo = recent.length - 1 - di; // 0 = most recent → 2026-06-01
       const dateStr = stampedDate(daysAgo);
-      const temps = [], pms = [], aqisByHour = [];
 
       dayBlock.times.forEach((tk, hour) => {
         const r = readAt(tk);
         const aqi_index = pm25ToAQI(r.pm25);
-        aqisByHour.push({ hour, aqi: aqi_index ?? -1 });
-        if (r.temperature != null) { temps.push(r.temperature); winTemps.push(r.temperature); }
-        if (r.pm25 != null) { pms.push(r.pm25); winPms.push(r.pm25); }
+
+        if (r.temperature != null) winTemps.push(r.temperature);
+        if (r.pm25 != null) { winPms.push(r.pm25); }
         if (r.humidity != null) winHums.push(r.humidity);
         if (r.no2 != null) winNo2.push(r.no2);
 
-        // Only the most recent day populates the current-day hourly chart.
-        if (daysAgo === 0) {
-          hourly.push({
-            station_id: st.station_id, province: st.province, region: st.region,
-            date: SEED_DATE,
-            timestamp: new Date(Date.UTC(SEED_Y, SEED_M, SEED_D, hour, 0, 0)),
-            hour, ...r, aqi_index,
-          });
-        }
-      });
+        // Every hour of every day becomes a RealTimeReadings row.
+        readings.push({
+          station_id: st.station_id, province: st.province, region: st.region,
+          date: dateStr,
+          timestamp: stampedTimestamp(daysAgo, hour),
+          temperature: r.temperature ?? null,
+          humidity: r.humidity ?? null,
+          pm25: r.pm25 ?? null,
+          no2: r.no2 ?? null,
+          aqi_index,
+          aqi_alert: aqiAlert(aqi_index),
+          temp_alert: tempAlert(r.temperature),
+        });
 
-      const peak = aqisByHour.reduce((m, x) => (x.aqi > m.aqi ? x : m), { hour: 0, aqi: -1 });
-      const avgPm = avg(pms);
-      daily.push({
-        station_id: st.station_id, province: st.province, region: st.region,
-        date: dateStr,
-        avg_temp: round(avg(temps)),
-        max_temp: round(temps.length ? Math.max(...temps) : null),
-        min_temp: round(temps.length ? Math.min(...temps) : null),
-        avg_pm25: round(avgPm, 2),
-        avg_aqi: pm25ToAQI(avgPm),
-        peak_aqi_hour: peak.hour,
+        // Region pivot accumulation for BatchHistoricalAggregations.
+        if (r.pm25 != null) {
+          if (!regionByDate.has(dateStr)) regionByDate.set(dateStr, { North: [], Central: [], South: [] });
+          regionByDate.get(dateStr)[st.region].push(r.pm25);
+        }
       });
     });
 
@@ -214,22 +244,44 @@ async function main() {
     });
   });
 
+  // Region-pivot rows: one doc per date with avg PM2.5 per region.
+  const batchRows = [...regionByDate.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, byRegion]) => ({
+      date,
+      North: round(avg(byRegion.North), 2),
+      Central: round(avg(byRegion.Central), 2),
+      South: round(avg(byRegion.South), 2),
+    }));
+
   await connectDb();
   console.log('Writing to MongoDB…');
 
-  await HourlyReading.deleteMany({});
-  await HourlyReading.insertMany(hourly);
-
-  await DailyReading.deleteMany({});
-  await DailyReading.insertMany(daily);
+  await RealTimeReading.deleteMany({});
+  await RealTimeReading.insertMany(readings, { ordered: false });
 
   await ProvinceAggregation.deleteMany({});
   await ProvinceAggregation.insertMany(provinceRows);
 
-  console.log(`✅ weather_hourly: ${hourly.length} docs (current day, 24h × stations)`);
-  console.log(`✅ weather_daily:  ${daily.length} docs (${NUM_DAYS} days × stations)`);
-  console.log(`✅ ProvinceAggregations: ${provinceRows.length} stations recomputed`);
-  console.log('   RealTimeReadings + BatchHistoricalAggregations left untouched.');
+  await BatchHistorical.deleteMany({});
+  await BatchHistorical.insertMany(batchRows);
+
+  // Drop the redundant collections the old seed created.
+  const dropIfExists = async (name) => {
+    try {
+      await mongoose.connection.db.dropCollection(name);
+      console.log(`🗑️  dropped ${name}`);
+    } catch (e) {
+      if (e.codeName !== 'NamespaceNotFound') throw e;
+    }
+  };
+  await dropIfExists('weather_hourly');
+  await dropIfExists('weather_daily');
+
+  console.log(`✅ RealTimeReadings: ${readings.length} docs (${NUM_DAYS}d × 24h × stations)`);
+  console.log(`✅ ProvinceAggregations: ${provinceRows.length} stations`);
+  console.log(`✅ BatchHistoricalAggregations: ${batchRows.length} dates (region PM2.5 pivot)`);
+  console.log('   AQIStream_avg left untouched (Spark Streaming output).');
 
   await mongoose.disconnect();
   process.exit(0);

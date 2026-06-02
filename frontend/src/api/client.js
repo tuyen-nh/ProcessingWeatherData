@@ -96,7 +96,7 @@ export function getRealtimeAll() {
 }
 
 // ── History: GET /daily?station_id=&start_date=&end_date= → per-day rows ──
-// Source: weather_daily (real daily aggregates). Already in the component shape.
+// Daily aggregates computed from RealTimeReadings. Already in the component shape.
 async function realHistory(cityId, startDate, endDate) {
   const city = cityById(cityId)
   const q = new URLSearchParams({ station_id: city.station_id })
@@ -229,7 +229,7 @@ export function getRealtimeSeries(cityId, limit = 30) {
 }
 
 // ── Day timeline: GET /hourly?station_id= → 24 hourly rows (0:00→23:00) ──
-// Sourced from the seeded `weather_hourly` history collection.
+// Sourced from RealTimeReadings filtered to the latest day.
 async function realDaySeries(cityId) {
   const city = cityById(cityId)
   const arr = await real(`/hourly?station_id=${city.station_id}`)

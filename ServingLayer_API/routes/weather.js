@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { RealTimeReading, StreamAvg, ProvinceAggregation, BatchHistorical, HourlyReading, DailyReading } = require('../models');
+const { RealTimeReading, StreamAvg, ProvinceAggregation, BatchHistorical } = require('../models');
 
 // aqi_alert / temp_alert string values that StreamingAQI emits and that we treat
 // as alert-worthy. Anything outside these is "fine" (Good/Moderate/Normal/...).
@@ -63,7 +63,8 @@ router.get('/realtime/series', async (req, res) => {
 // GET /api/weather/hourly
 // History day-timeline. Hourly readings (0:00→23:00) for one station, ascending.
 // Drives the Realtime page's day chart. Query: ?station_id= (required) &date=
-// (optional — defaults to the latest seeded day). Source: weather_hourly.
+// (optional — defaults to the latest day). Source: RealTimeReadings filtered by
+// date (the same collection that holds the live feed + the seeded 30-day history).
 // ============================================================================
 router.get('/hourly', async (req, res) => {
     try {
@@ -72,14 +73,17 @@ router.get('/hourly', async (req, res) => {
 
         let { date } = req.query;
         if (!date) {
-            const latest = await HourlyReading.findOne({ station_id }).sort({ timestamp: -1 }).lean();
+            const latest = await RealTimeReading.findOne({ station_id }).sort({ timestamp: -1 }).lean();
             date = latest?.date;
         }
 
-        const docs = await HourlyReading.find(date ? { station_id, date } : { station_id })
+        const docs = await RealTimeReading.find(date ? { station_id, date } : { station_id })
             .sort({ timestamp: 1 })
-            .select('-_id timestamp hour temperature humidity pm25 no2 aqi_index')
+            .select('-_id timestamp temperature humidity pm25 no2 aqi_index')
             .lean();
+
+        // hour 0–23 derived from the timestamp (stored as UTC midnight + hour).
+        docs.forEach((d) => { d.hour = new Date(d.timestamp).getUTCHours(); });
 
         res.json(docs);
     } catch (error) {
@@ -91,24 +95,52 @@ router.get('/hourly', async (req, res) => {
 // GET /api/weather/daily
 // History. Per-station daily aggregates over a date range, ascending. Drives
 // the History page. Query: ?station_id= (required) &start_date= &end_date=
-// (optional 'YYYY-MM-DD'). Source: weather_daily.
+// (optional 'YYYY-MM-DD'). Computed on-the-fly by aggregating RealTimeReadings
+// per date — no separate daily collection needed.
 // ============================================================================
 router.get('/daily', async (req, res) => {
     try {
         const { station_id, start_date, end_date } = req.query;
         if (!station_id) return res.status(400).json({ error: 'station_id is required' });
 
-        const filter = { station_id };
+        const match = { station_id };
         if (start_date || end_date) {
-            filter.date = {};
-            if (start_date) filter.date.$gte = start_date;
-            if (end_date) filter.date.$lte = end_date;
+            match.date = {};
+            if (start_date) match.date.$gte = start_date;
+            if (end_date) match.date.$lte = end_date;
         }
 
-        const docs = await DailyReading.find(filter)
-            .sort({ date: 1 })
-            .select('-_id date avg_temp max_temp min_temp avg_pm25 avg_aqi peak_aqi_hour')
-            .lean();
+        const grouped = await RealTimeReading.aggregate([
+            { $match: match },
+            { $group: {
+                _id: '$date',
+                avg_temp: { $avg: '$temperature' },
+                max_temp: { $max: '$temperature' },
+                min_temp: { $min: '$temperature' },
+                avg_pm25: { $avg: '$pm25' },
+                avg_aqi:  { $avg: '$aqi_index' },
+                hours:    { $push: { hour: { $hour: '$timestamp' }, aqi: '$aqi_index' } }
+            }},
+            { $sort: { _id: 1 } }
+        ]);
+
+        const docs = grouped.map((g) => {
+            // peak_aqi_hour = hour of the day's max AQI.
+            const peak = (g.hours || []).reduce(
+                (m, x) => (x.aqi != null && x.aqi > m.aqi ? x : m),
+                { hour: 0, aqi: -Infinity }
+            );
+            const r = (n, d = 1) => (n == null ? null : Math.round(n * 10 ** d) / 10 ** d);
+            return {
+                date: g._id,
+                avg_temp: r(g.avg_temp),
+                max_temp: r(g.max_temp),
+                min_temp: r(g.min_temp),
+                avg_pm25: r(g.avg_pm25, 2),
+                avg_aqi: r(g.avg_aqi, 0),
+                peak_aqi_hour: peak.hour
+            };
+        });
 
         res.json(docs);
     } catch (error) {
