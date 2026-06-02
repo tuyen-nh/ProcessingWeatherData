@@ -2,14 +2,17 @@
 // for all 34 stations, re-stamp onto a 30-day window ending 2026-06-01, and load
 // into Mongo using ONLY the 4 collections the project defines:
 //
-//   RealTimeReadings           ← every hourly reading (30d × 24h × 34 stations).
-//                                Also the live Kafka feed's target; seeding it
-//                                means history persists even with streaming off.
+//   AQIStream_avg              ← every hourly reading (30d × 24h × 34 stations).
+//                                Also the live Kafka feed's APPEND target; seeding
+//                                it means the chart/series history persists even
+//                                with streaming off. Source for /hourly + series.
+//   RealTimeReadings           ← latest reading per station (~34 docs). The live
+//                                Kafka feed OVERRIDES these (_id = station_id);
+//                                seeding mirrors that snapshot.
 //   ProvinceAggregations       ← per-day per-station daily rollup (~1020 rows),
 //                                with avg_aqi + peak_aqi_hour. Drives History page.
 //   BatchHistoricalAggregations← per-station 30-day average summary (34 rows).
 //                                Baseline for ranking (/stats) + compare.
-//   AQIStream_avg              ← left untouched (Spark Streaming windowed output).
 //
 // Shapes mirror BatchWeatherAnalytics.java (provinceDf / stationAvgDf).
 // Also DROPS the legacy weather_hourly / weather_daily collections.
@@ -18,7 +21,7 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
 const connectDb = require('../db');
-const { RealTimeReading, ProvinceAggregation, BatchHistorical } = require('../models');
+const { RealTimeReading, DaySeries, ProvinceAggregation, BatchHistorical } = require('../models');
 
 const SEED_DATE = '2026-06-01';          // newest day of the stamped window
 const SEED_Y = 2026, SEED_M = 5, SEED_D = 1; // month is 0-based for Date.UTC
@@ -151,7 +154,7 @@ async function main() {
 
   const avg = (arr) => (arr.length ? arr.reduce((s, x) => s + x, 0) / arr.length : null);
 
-  const readings = [];     // → RealTimeReadings (every hour of every day)
+  const readings = [];     // → AQIStream_avg (every hour of every day)
   const dailyRows = [];    // → ProvinceAggregations (per-day per-station, ~1020)
   const summaryRows = [];  // → BatchHistoricalAggregations (per-station 30-day avg, 34)
 
@@ -221,7 +224,7 @@ async function main() {
           if (aqi_index > peak.aqi) peak = { hour, aqi: aqi_index };
         }
 
-        // Every hour of every day becomes a RealTimeReadings row.
+        // Every hour of every day becomes an AQIStream_avg row.
         readings.push({
           station_id: st.station_id, province: st.province, region: st.region,
           date: dateStr,
@@ -264,11 +267,22 @@ async function main() {
     });
   });
 
+  // Latest reading per station → RealTimeReadings snapshot (~34 docs). Mirrors the
+  // Kafka feed's override (_id = station_id). readings are stamped chronologically,
+  // so the last push per station is its newest reading.
+  const latestByStation = new Map();
+  readings.forEach((r) => { latestByStation.set(r.station_id, r); });
+  const snapshot = [...latestByStation.values()].map((r) => ({ _id: r.station_id, ...r }));
+
   await connectDb();
   console.log('Writing to MongoDB…');
 
+  // Full per-station history → AQIStream_avg (chart/series source, append log).
+  await DaySeries.deleteMany({});
+  await DaySeries.insertMany(readings, { ordered: false });
+
   await RealTimeReading.deleteMany({});
-  await RealTimeReading.insertMany(readings, { ordered: false });
+  await RealTimeReading.insertMany(snapshot, { ordered: false });
 
   await ProvinceAggregation.deleteMany({});
   await ProvinceAggregation.insertMany(dailyRows, { ordered: false });
@@ -288,10 +302,10 @@ async function main() {
   await dropIfExists('weather_hourly');
   await dropIfExists('weather_daily');
 
-  console.log(`✅ RealTimeReadings: ${readings.length} docs (${NUM_DAYS}d × 24h × stations)`);
+  console.log(`✅ AQIStream_avg: ${readings.length} docs (${NUM_DAYS}d × 24h × stations)`);
+  console.log(`✅ RealTimeReadings: ${snapshot.length} docs (latest per station)`);
   console.log(`✅ ProvinceAggregations: ${dailyRows.length} docs (per-day × station)`);
   console.log(`✅ BatchHistoricalAggregations: ${summaryRows.length} stations (30-day summary)`);
-  console.log('   AQIStream_avg left untouched (Spark Streaming output).');
 
   await mongoose.disconnect();
   process.exit(0);

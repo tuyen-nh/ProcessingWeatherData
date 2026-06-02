@@ -79,26 +79,6 @@ public class StreamingAQI {
                 };
                 spark.udf().register("pm25ToAQI", calculateAQI, DataTypes.IntegerType);
 
-                // Requirement 5 & 1: Watermarking & Advanced Aggregations (Window Functions)
-                // Moving Average of PM2.5 over a 15-minute window for each region
-                // Watermarking discards data arriving more than 2 hours late.
-                Dataset<Row> windowedAggregations = enrichedStream
-                                .withWatermark("timestamp", "2 hours")
-                                .groupBy(
-                                                window(col("timestamp"), "15 minutes"),
-                                                col("province"))
-                                .agg(
-                                                round(avg("pm25"), 2).alias("avg_pm25"),
-                                                max("pm25").alias("peak_pm25"),
-                                                round(avg("temperature"), 2).alias("avg_temp"),
-                                                max("temperature").alias("max_temp"),
-                                                min("temperature").alias("min_temp"),
-                                                round(avg("humidity"), 2).alias("avg_humidity"),
-                                                round(avg("no2"), 2).alias("avg_no2"));
-
-                Dataset<Row> finalAggregations = windowedAggregations
-                                .withColumn("aqi_index", callUDF("pm25ToAQI", col("avg_pm25")));
-
                 // STREAM 1: Real-time per-station data with alert fields
                 Dataset<Row> realtimeAlerts = enrichedStream
                                 .withColumn("aqi_index", callUDF("pm25ToAQI", col("pm25")))
@@ -116,32 +96,28 @@ public class StreamingAQI {
                                                                 .when(col("temperature").leq(40), lit("Hot"))
                                                                 .otherwise(lit("Extreme Heat")));
 
+                // Two sinks share the same realtimeAlerts rows:
+                //  - RealTimeReadings: OVERRIDE one doc per station (_id = station_id), so the
+                //    snapshot collection stays at ~34 docs (latest reading per station).
+                //  - AQIStream_avg: APPEND every reading (per-station day-series history) — the
+                //    source for the home chart (/hourly) + /realtime/series.
                 realtimeAlerts.writeStream()
                                 .outputMode(OutputMode.Append())
                                 .foreachBatch((batchDF, batchId) -> {
                                         if (!batchDF.isEmpty()) {
-                                                batchDF.write()
+                                                // OVERRIDE: matching _id replaces the existing doc.
+                                                batchDF.withColumn("_id", col("station_id"))
+                                                                .write()
                                                                 .format("mongo")
                                                                 .mode("append")
                                                                 .option("spark.mongodb.output.uri",
                                                                                 "mongodb+srv://tuyen:tuyen@cluster0.tkzrw9q.mongodb.net/")
                                                                 .option("spark.mongodb.output.database", "Big_Data")
                                                                 .option("spark.mongodb.output.collection",
-                                                                                "RealTimeReadings") // ← different
-                                                                                                    // collection
+                                                                                "RealTimeReadings")
                                                                 .save();
-                                        }
-                                })
-                                .option("checkpointLocation", "hdfs://namenode:9000/checkpoints/realtime_stream")
-                                .start();
 
-                // Requirement 5: Manage state and Output Mode
-                // format("mongo") does NOT support streaming sink directly -> use foreachBatch
-                // instead.
-                finalAggregations.writeStream()
-                                .outputMode(OutputMode.Update())
-                                .foreachBatch((batchDF, batchId) -> {
-                                        if (!batchDF.isEmpty()) {
+                                                // APPEND: every reading becomes a new doc (history).
                                                 batchDF.write()
                                                                 .format("mongo")
                                                                 .mode("append")
@@ -155,7 +131,7 @@ public class StreamingAQI {
                                         }
                                 })
                                 // Requirement 5: Exactly-once semantics via Checkpointing (trên HDFS cluster)
-                                .option("checkpointLocation", "hdfs://namenode:9000/checkpoints/aqi_stream_mongo")
+                                .option("checkpointLocation", "hdfs://namenode:9000/checkpoints/realtime_stream")
                                 .start();
 
                 // Monitor both streams simultaneously — exits if either one fails

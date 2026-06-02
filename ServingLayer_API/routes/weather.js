@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { RealTimeReading, StreamAvg, ProvinceAggregation, BatchHistorical } = require('../models');
+const { RealTimeReading, DaySeries, ProvinceAggregation, BatchHistorical } = require('../models');
 
 // aqi_alert / temp_alert string values that StreamingAQI emits and that we treat
 // as alert-worthy. Anything outside these is "fine" (Good/Moderate/Normal/...).
@@ -39,6 +39,8 @@ router.get('/realtime', async (req, res) => {
 // GET /api/weather/realtime/series
 // Speed Layer time-series. Last N readings for one station, oldest-first (for
 // charting metric change over time). Query: ?station_id= (required) &limit=30
+// Source: AQIStream_avg (the per-station reading history; RealTimeReadings now
+// only keeps the latest doc per station).
 // ============================================================================
 router.get('/realtime/series', async (req, res) => {
     try {
@@ -47,7 +49,7 @@ router.get('/realtime/series', async (req, res) => {
 
         const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 500);
 
-        const docs = await RealTimeReading.find({ station_id })
+        const docs = await DaySeries.find({ station_id })
             .sort({ timestamp: -1 })
             .limit(limit)
             .select('-_id timestamp temperature humidity pm25 no2 aqi_index')
@@ -63,8 +65,8 @@ router.get('/realtime/series', async (req, res) => {
 // GET /api/weather/hourly
 // History day-timeline. Hourly readings (0:00→23:00) for one station, ascending.
 // Drives the Realtime page's day chart. Query: ?station_id= (required) &date=
-// (optional — defaults to the latest day). Source: RealTimeReadings filtered by
-// date (the same collection that holds the live feed + the seeded 30-day history).
+// (optional — defaults to the latest day). Source: AQIStream_avg (per-station
+// reading history; holds the live feed appends + the seeded 30-day history).
 // ============================================================================
 router.get('/hourly', async (req, res) => {
     try {
@@ -73,11 +75,11 @@ router.get('/hourly', async (req, res) => {
 
         let { date } = req.query;
         if (!date) {
-            const latest = await RealTimeReading.findOne({ station_id }).sort({ timestamp: -1 }).lean();
+            const latest = await DaySeries.findOne({ station_id }).sort({ timestamp: -1 }).lean();
             date = latest?.date;
         }
 
-        const docs = await RealTimeReading.find(date ? { station_id, date } : { station_id })
+        const docs = await DaySeries.find(date ? { station_id, date } : { station_id })
             .sort({ timestamp: 1 })
             .select('-_id timestamp temperature humidity pm25 no2 aqi_index')
             .lean();
@@ -113,26 +115,6 @@ router.get('/daily', async (req, res) => {
             .sort({ date: 1 })
             .select('-_id date avg_temp max_temp min_temp avg_pm25 avg_aqi peak_aqi_hour')
             .lean();
-
-        res.json(docs);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// ============================================================================
-// GET /api/weather/stream-avg
-// Speed Layer. 15-minute windowed averages per province. Optional ?province=.
-// ============================================================================
-router.get('/stream-avg', async (req, res) => {
-    try {
-        const { province } = req.query;
-        const filter = province ? { province } : {};
-
-        const docs = await StreamAvg.find(filter)
-            .sort({ 'window.start': -1 })
-            .limit(200)
-            .select('-_id -__v');
 
         res.json(docs);
     } catch (error) {

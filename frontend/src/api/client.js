@@ -229,7 +229,7 @@ export function getRealtimeSeries(cityId, limit = 30) {
 }
 
 // ── Day timeline: GET /hourly?station_id= → 24 hourly rows (0:00→23:00) ──
-// Sourced from RealTimeReadings filtered to the latest day.
+// Sourced from AQIStream_avg (per-station history) filtered to the latest day.
 async function realDaySeries(cityId) {
   const city = cityById(cityId)
   const arr = await real(`/hourly?station_id=${city.station_id}`)
