@@ -96,7 +96,7 @@ export function getRealtimeAll() {
 }
 
 // ── History: GET /daily?station_id=&start_date=&end_date= → per-day rows ──
-// Daily aggregates computed from RealTimeReadings. Already in the component shape.
+// Source: ProvinceAggregations (batch per-day per-station). Component shape.
 async function realHistory(cityId, startDate, endDate) {
   const city = cityById(cityId)
   const q = new URLSearchParams({ station_id: city.station_id })

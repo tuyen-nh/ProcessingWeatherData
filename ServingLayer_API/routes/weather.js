@@ -93,54 +93,26 @@ router.get('/hourly', async (req, res) => {
 
 // ============================================================================
 // GET /api/weather/daily
-// History. Per-station daily aggregates over a date range, ascending. Drives
+// Batch Layer. Per-station daily aggregates over a date range, ascending. Drives
 // the History page. Query: ?station_id= (required) &start_date= &end_date=
-// (optional 'YYYY-MM-DD'). Computed on-the-fly by aggregating RealTimeReadings
-// per date — no separate daily collection needed.
+// (optional 'YYYY-MM-DD'). Source: ProvinceAggregations (per-day per-station).
 // ============================================================================
 router.get('/daily', async (req, res) => {
     try {
         const { station_id, start_date, end_date } = req.query;
         if (!station_id) return res.status(400).json({ error: 'station_id is required' });
 
-        const match = { station_id };
+        const filter = { station_id };
         if (start_date || end_date) {
-            match.date = {};
-            if (start_date) match.date.$gte = start_date;
-            if (end_date) match.date.$lte = end_date;
+            filter.date = {};
+            if (start_date) filter.date.$gte = start_date;
+            if (end_date) filter.date.$lte = end_date;
         }
 
-        const grouped = await RealTimeReading.aggregate([
-            { $match: match },
-            { $group: {
-                _id: '$date',
-                avg_temp: { $avg: '$temperature' },
-                max_temp: { $max: '$temperature' },
-                min_temp: { $min: '$temperature' },
-                avg_pm25: { $avg: '$pm25' },
-                avg_aqi:  { $avg: '$aqi_index' },
-                hours:    { $push: { hour: { $hour: '$timestamp' }, aqi: '$aqi_index' } }
-            }},
-            { $sort: { _id: 1 } }
-        ]);
-
-        const docs = grouped.map((g) => {
-            // peak_aqi_hour = hour of the day's max AQI.
-            const peak = (g.hours || []).reduce(
-                (m, x) => (x.aqi != null && x.aqi > m.aqi ? x : m),
-                { hour: 0, aqi: -Infinity }
-            );
-            const r = (n, d = 1) => (n == null ? null : Math.round(n * 10 ** d) / 10 ** d);
-            return {
-                date: g._id,
-                avg_temp: r(g.avg_temp),
-                max_temp: r(g.max_temp),
-                min_temp: r(g.min_temp),
-                avg_pm25: r(g.avg_pm25, 2),
-                avg_aqi: r(g.avg_aqi, 0),
-                peak_aqi_hour: peak.hour
-            };
-        });
+        const docs = await ProvinceAggregation.find(filter)
+            .sort({ date: 1 })
+            .select('-_id date avg_temp max_temp min_temp avg_pm25 avg_aqi peak_aqi_hour')
+            .lean();
 
         res.json(docs);
     } catch (error) {
@@ -170,11 +142,12 @@ router.get('/stream-avg', async (req, res) => {
 
 // ============================================================================
 // GET /api/weather/provinces
-// Batch Layer. All per-station aggregates (one row per station, ~34).
+// Batch Layer. Per-station 30-day average summary (one row per station, ~34).
+// Source: BatchHistoricalAggregations.
 // ============================================================================
 router.get('/provinces', async (req, res) => {
     try {
-        const docs = await ProvinceAggregation.find({})
+        const docs = await BatchHistorical.find({})
             .sort({ region: 1, province: 1 })
             .select('-_id -__v');
 
@@ -187,10 +160,11 @@ router.get('/provinces', async (req, res) => {
 // ============================================================================
 // GET /api/weather/stats
 // Batch Layer. Top-5 hottest + top-5 most polluted stations + national avg.
+// Source: BatchHistoricalAggregations (per-station 30-day summary).
 // ============================================================================
 router.get('/stats', async (req, res) => {
     try {
-        const top = (sortField) => ProvinceAggregation.aggregate([
+        const top = (sortField) => BatchHistorical.aggregate([
             { $sort: { [sortField]: -1 } },
             { $limit: 5 },
             { $project: { _id: 0, station_id: 1, province: 1, region: 1, avg_temp: 1, avg_pm25: 1 } }
@@ -199,7 +173,7 @@ router.get('/stats', async (req, res) => {
         const [topHottest, topPolluted, nationalAgg] = await Promise.all([
             top('avg_temp'),
             top('avg_pm25'),
-            ProvinceAggregation.aggregate([
+            BatchHistorical.aggregate([
                 { $group: {
                     _id: null,
                     national_avg_temp: { $avg: '$avg_temp' },
@@ -293,7 +267,7 @@ router.get('/compare', async (req, res) => {
 
         const [current, baseline] = await Promise.all([
             RealTimeReading.findOne({ station_id }).sort({ timestamp: -1 }),
-            ProvinceAggregation.findOne({ station_id })
+            BatchHistorical.findOne({ station_id })
         ]);
 
         if (!current) return res.status(404).json({ error: 'No real-time data for this station' });
@@ -313,35 +287,6 @@ router.get('/compare', async (req, res) => {
             pm25_deviation: current.pm25 != null && baseline.avg_pm25 != null
                 ? Math.round((current.pm25 - baseline.avg_pm25) * 100) / 100 : null
         });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// ============================================================================
-// GET /api/weather/history
-// Batch Layer. Avg PM2.5 per region over time (date series).
-// Query: ?region=North|Central|South (optional — omit for all region columns).
-//
-// NOTE: This is the ONLY date-dimensioned batch view available today
-// (BatchHistoricalAggregations is a region pivot). Full per-day-per-station
-// history (avg_temp/min_temp/max_temp/avg_aqi per day) requires the batch job
-// to emit a per-day-per-station aggregation first — see plan follow-ups.
-// ============================================================================
-router.get('/history', async (req, res) => {
-    try {
-        const { region } = req.query;
-
-        const docs = await BatchHistorical.find({})
-            .sort({ date: 1 })
-            .select('-_id -__v')
-            .lean();
-
-        if (!region) return res.json(docs);
-
-        // Project just the requested region column alongside the date.
-        const series = docs.map((d) => ({ date: d.date, avg_pm25: d[region] ?? null }));
-        res.json(series);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

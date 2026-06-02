@@ -3,6 +3,7 @@ package tn.insat.tp3;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.api.java.UDF1;
 import org.apache.spark.sql.api.java.UDF2;
 import org.apache.spark.sql.types.DataTypes;
 import static org.apache.spark.sql.functions.*;
@@ -28,6 +29,29 @@ public class BatchWeatherAnalytics {
         };
         // Registering the UDF with Spark
         spark.udf().register("calculateHeatIndex", heatIndexUDF, DataTypes.DoubleType);
+
+        // PM2.5 → US EPA AQI (same UDF as StreamingAQI, needed for daily avg_aqi/peak).
+        UDF1<Double, Integer> calculateAQI = (pm25) -> {
+            if (pm25 == null)
+                return 0;
+            double c = pm25;
+            if (c <= 12.0)
+                return (int) Math.round((50.0 / 12.0) * c);
+            if (c <= 35.4)
+                return (int) Math.round(((100.0 - 51.0) / (35.4 - 12.1)) * (c - 12.1) + 51.0);
+            if (c <= 55.4)
+                return (int) Math.round(((150.0 - 101.0) / (55.4 - 35.5)) * (c - 35.5) + 101.0);
+            if (c <= 150.4)
+                return (int) Math.round(((200.0 - 151.0) / (150.4 - 55.5)) * (c - 55.5) + 151.0);
+            if (c <= 250.4)
+                return (int) Math.round(((300.0 - 201.0) / (250.4 - 150.5)) * (c - 150.5) + 201.0);
+            if (c <= 350.4)
+                return (int) Math.round(((400.0 - 301.0) / (350.4 - 250.5)) * (c - 250.5) + 301.0);
+            if (c <= 500.4)
+                return (int) Math.round(((500.0 - 401.0) / (500.4 - 350.5)) * (c - 350.5) + 401.0);
+            return 500;
+        };
+        spark.udf().register("pm25ToAQI", calculateAQI, DataTypes.IntegerType);
 
         // 1. Read the Master Dataset (Historical CSVs + Streaming Parquet Dumps)
         System.out.println("Reading Weather Data from Master Dataset...");
@@ -158,8 +182,13 @@ public class BatchWeatherAnalytics {
         // Requirement 1: Complex Aggregation — Per-Province Daily Stats (all 34 stations)
         // Thêm "date" vào groupBy → mỗi dòng = thống kê 1 ngày của 1 tỉnh
         // Thực tế hơn: theo dõi xu hướng theo ngày thay vì all-time average
-        System.out.println("--- Per-Province Daily Analytics (34 Stations) for: " + yesterday + " ---");
-        Dataset<Row> provinceDf = transformedDf
+        // Per-reading hour + AQI so the daily rollup can carry avg_aqi + peak_aqi_hour.
+        Dataset<Row> withHourAqi = transformedDf
+                .withColumn("hour", hour(col("timestamp")))
+                .withColumn("aqi", callUDF("pm25ToAQI", col("pm25")));
+
+        System.out.println("--- Per-Province DAILY Analytics (date × 34 Stations) ---");
+        Dataset<Row> provinceDf = withHourAqi
                 .groupBy("date", "station_id", "province", "region")
                 .agg(
                         round(avg("temperature"), 1).alias("avg_temp"),
@@ -168,19 +197,28 @@ public class BatchWeatherAnalytics {
                         round(avg("humidity"), 1).alias("avg_humidity"),
                         round(avg("pm25"), 2).alias("avg_pm25"),
                         round(avg("no2"), 2).alias("avg_no2"),
+                        round(avg("aqi"), 0).alias("avg_aqi"),
+                        // max(struct(aqi, hour)) picks the hour of the day's peak AQI.
+                        max(struct(col("aqi"), col("hour"))).alias("peak"),
                         count("*").alias("record_count"))
+                .withColumn("peak_aqi_hour", col("peak.hour"))
+                .drop("peak")
                 .orderBy("date", "region", "province");
         provinceDf.show(34, false);
 
-        // Requirement 1: Complex Aggregation (Pivot)
-        // Pivoting data to see average PM2.5 by region across dates
-        System.out.println("--- Average PM2.5 Pivoted By Region ---");
-        Dataset<Row> pivotedDf = transformedDf
-                .groupBy("date")
-                .pivot("region") // Pivots regions (North, Central, South) as columns
-                .agg(round(avg("pm25"), 2).alias("avg_pm25"));
-
-        pivotedDf.show();
+        // Per-station 30-day SUMMARY (one averaged row per station, no date).
+        System.out.println("--- Per-Station 30-Day Average Summary (34 Stations) ---");
+        Dataset<Row> stationAvgDf = withHourAqi
+                .groupBy("station_id", "province", "region")
+                .agg(
+                        round(avg("temperature"), 1).alias("avg_temp"),
+                        round(max("temperature"), 1).alias("max_temp"),
+                        round(avg("humidity"), 1).alias("avg_humidity"),
+                        round(avg("pm25"), 2).alias("avg_pm25"),
+                        round(avg("no2"), 2).alias("avg_no2"),
+                        count("*").alias("record_count"))
+                .orderBy("region", "province");
+        stationAvgDf.show(34, false);
 
         // Requirement 4: Partition Pruning 
         // Saving the output partitioned by Region heavily optimizes future querying!
@@ -229,21 +267,21 @@ public class BatchWeatherAnalytics {
         // Layer
         System.out.println("Pushing Batch Aggregations to MongoDB (Serving Layer)...");
 
-        // Collection 1: Region-level pivot (avg PM2.5 per region per date)
+        // Collection 1: Per-station 30-day average summary (34 rows)
         try {
-            pivotedDf.write()
+            stationAvgDf.write()
                     .format("mongo")
                     .mode("overwrite")
                     .option("spark.mongodb.output.uri", "mongodb+srv://tuyen:tuyen@cluster0.tkzrw9q.mongodb.net/")
                     .option("spark.mongodb.output.database", "Big_Data")
                     .option("spark.mongodb.output.collection", "BatchHistoricalAggregations")
                     .save();
-            System.out.println("Successfully pushed Region Pivot to MongoDB!");
+            System.out.println("Successfully pushed Per-Station Summary to MongoDB!");
         } catch (Exception e) {
-            System.out.println("Could not save Region Pivot to MongoDB. Error: " + e.getMessage());
+            System.out.println("Could not save Per-Station Summary to MongoDB. Error: " + e.getMessage());
         }
 
-        // Collection 2: Province-level stats (all 34 stations)
+        // Collection 2: Per-day per-station stats (date × 34 stations = up to 1020 rows)
         try {
             provinceDf.write()
                     .format("mongo")

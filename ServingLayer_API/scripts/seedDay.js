@@ -5,12 +5,14 @@
 //   RealTimeReadings           ← every hourly reading (30d × 24h × 34 stations).
 //                                Also the live Kafka feed's target; seeding it
 //                                means history persists even with streaming off.
-//   ProvinceAggregations       ← per-station averages over the whole window.
-//   BatchHistoricalAggregations← avg PM2.5 pivoted by region (North/Central/South)
-//                                per date.
+//   ProvinceAggregations       ← per-day per-station daily rollup (~1020 rows),
+//                                with avg_aqi + peak_aqi_hour. Drives History page.
+//   BatchHistoricalAggregations← per-station 30-day average summary (34 rows).
+//                                Baseline for ranking (/stats) + compare.
 //   AQIStream_avg              ← left untouched (Spark Streaming windowed output).
 //
-// Also DROPS the now-redundant weather_hourly / weather_daily collections.
+// Shapes mirror BatchWeatherAnalytics.java (provinceDf / stationAvgDf).
+// Also DROPS the legacy weather_hourly / weather_daily collections.
 //
 // Run:  npm run seed   (from ServingLayer_API/)
 require('dotenv').config();
@@ -149,9 +151,9 @@ async function main() {
 
   const avg = (arr) => (arr.length ? arr.reduce((s, x) => s + x, 0) / arr.length : null);
 
-  const readings = [];      // → RealTimeReadings (every hour of every day)
-  const provinceRows = [];  // → ProvinceAggregations (per-station window avg)
-  const regionByDate = new Map(); // date → { North:[pm25...], Central:[...], South:[...] }
+  const readings = [];     // → RealTimeReadings (every hour of every day)
+  const dailyRows = [];    // → ProvinceAggregations (per-day per-station, ~1020)
+  const summaryRows = [];  // → BatchHistoricalAggregations (per-station 30-day avg, 34)
 
   STATIONS.forEach((st, i) => {
     // Merge all sources into one time → values map (prefer non-null).
@@ -202,14 +204,22 @@ async function main() {
       const daysAgo = recent.length - 1 - di; // 0 = most recent → 2026-06-01
       const dateStr = stampedDate(daysAgo);
 
+      // Per-day accumulators → one ProvinceAggregations daily row.
+      const dTemps = [], dPms = [], dHums = [], dNo2 = [], dAqis = [];
+      let peak = { hour: 0, aqi: -1 };
+
       dayBlock.times.forEach((tk, hour) => {
         const r = readAt(tk);
         const aqi_index = pm25ToAQI(r.pm25);
 
-        if (r.temperature != null) winTemps.push(r.temperature);
-        if (r.pm25 != null) { winPms.push(r.pm25); }
-        if (r.humidity != null) winHums.push(r.humidity);
-        if (r.no2 != null) winNo2.push(r.no2);
+        if (r.temperature != null) { dTemps.push(r.temperature); winTemps.push(r.temperature); }
+        if (r.pm25 != null) { dPms.push(r.pm25); winPms.push(r.pm25); }
+        if (r.humidity != null) { dHums.push(r.humidity); winHums.push(r.humidity); }
+        if (r.no2 != null) { dNo2.push(r.no2); winNo2.push(r.no2); }
+        if (aqi_index != null) {
+          dAqis.push(aqi_index);
+          if (aqi_index > peak.aqi) peak = { hour, aqi: aqi_index };
+        }
 
         // Every hour of every day becomes a RealTimeReadings row.
         readings.push({
@@ -224,16 +234,26 @@ async function main() {
           aqi_alert: aqiAlert(aqi_index),
           temp_alert: tempAlert(r.temperature),
         });
+      });
 
-        // Region pivot accumulation for BatchHistoricalAggregations.
-        if (r.pm25 != null) {
-          if (!regionByDate.has(dateStr)) regionByDate.set(dateStr, { North: [], Central: [], South: [] });
-          regionByDate.get(dateStr)[st.region].push(r.pm25);
-        }
+      // Daily rollup for this station/day (matches BatchWeatherAnalytics.provinceDf).
+      dailyRows.push({
+        date: dateStr,
+        station_id: st.station_id, province: st.province, region: st.region,
+        avg_temp: round(avg(dTemps)),
+        max_temp: round(dTemps.length ? Math.max(...dTemps) : null),
+        min_temp: round(dTemps.length ? Math.min(...dTemps) : null),
+        avg_humidity: round(avg(dHums), 0),
+        avg_pm25: round(avg(dPms), 2),
+        avg_no2: round(avg(dNo2), 2),
+        avg_aqi: dAqis.length ? Math.round(avg(dAqis)) : null,
+        peak_aqi_hour: peak.hour,
+        record_count: dTemps.length,
       });
     });
 
-    provinceRows.push({
+    // Per-station 30-day summary (matches BatchWeatherAnalytics.stationAvgDf).
+    summaryRows.push({
       station_id: st.station_id, province: st.province, region: st.region,
       avg_temp: round(avg(winTemps)),
       max_temp: round(winTemps.length ? Math.max(...winTemps) : null),
@@ -244,16 +264,6 @@ async function main() {
     });
   });
 
-  // Region-pivot rows: one doc per date with avg PM2.5 per region.
-  const batchRows = [...regionByDate.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([date, byRegion]) => ({
-      date,
-      North: round(avg(byRegion.North), 2),
-      Central: round(avg(byRegion.Central), 2),
-      South: round(avg(byRegion.South), 2),
-    }));
-
   await connectDb();
   console.log('Writing to MongoDB…');
 
@@ -261,10 +271,10 @@ async function main() {
   await RealTimeReading.insertMany(readings, { ordered: false });
 
   await ProvinceAggregation.deleteMany({});
-  await ProvinceAggregation.insertMany(provinceRows);
+  await ProvinceAggregation.insertMany(dailyRows, { ordered: false });
 
   await BatchHistorical.deleteMany({});
-  await BatchHistorical.insertMany(batchRows);
+  await BatchHistorical.insertMany(summaryRows);
 
   // Drop the redundant collections the old seed created.
   const dropIfExists = async (name) => {
@@ -279,8 +289,8 @@ async function main() {
   await dropIfExists('weather_daily');
 
   console.log(`✅ RealTimeReadings: ${readings.length} docs (${NUM_DAYS}d × 24h × stations)`);
-  console.log(`✅ ProvinceAggregations: ${provinceRows.length} stations`);
-  console.log(`✅ BatchHistoricalAggregations: ${batchRows.length} dates (region PM2.5 pivot)`);
+  console.log(`✅ ProvinceAggregations: ${dailyRows.length} docs (per-day × station)`);
+  console.log(`✅ BatchHistoricalAggregations: ${summaryRows.length} stations (30-day summary)`);
   console.log('   AQIStream_avg left untouched (Spark Streaming output).');
 
   await mongoose.disconnect();

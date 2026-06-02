@@ -34,8 +34,27 @@ const StreamAvgSchema = new mongoose.Schema({
     aqi_index:    { type: Number }
 }, { collection: 'AQIStream_avg', strict: false });
 
-// ── Batch Layer: per-station aggregates over full history (BatchWeatherAnalytics.provinceDf) ──
+// ── Batch Layer: per-day per-station daily stats (BatchWeatherAnalytics.provinceDf) ──
+// One row per station per date (date × 34 ≈ 1020). Drives the History page.
 const ProvinceAggregationSchema = new mongoose.Schema({
+    date:          { type: String, index: true },  // YYYY-MM-DD
+    station_id:    { type: String, index: true },
+    province:      { type: String, index: true },
+    region:        { type: String, index: true },
+    avg_temp:      { type: Number },
+    max_temp:      { type: Number },
+    min_temp:      { type: Number },
+    avg_humidity:  { type: Number },
+    avg_pm25:      { type: Number },
+    avg_no2:       { type: Number },
+    avg_aqi:       { type: Number },
+    peak_aqi_hour: { type: Number },                // hour 0–23 of the day's max AQI
+    record_count:  { type: Number }
+}, { collection: 'ProvinceAggregations', strict: false });
+
+// ── Batch Layer: per-station 30-day average summary (BatchWeatherAnalytics.stationAvgDf) ──
+// One averaged row per station (~34). Baseline for ranking + Lambda compare.
+const BatchHistoricalSchema = new mongoose.Schema({
     station_id:   { type: String, index: true },
     province:     { type: String, index: true },
     region:       { type: String, index: true },
@@ -45,12 +64,6 @@ const ProvinceAggregationSchema = new mongoose.Schema({
     avg_pm25:     { type: Number },
     avg_no2:      { type: Number },
     record_count: { type: Number }
-}, { collection: 'ProvinceAggregations', strict: false });
-
-// ── Batch Layer: avg PM2.5 pivoted by region per date (BatchWeatherAnalytics.pivotedDf) ──
-// Columns are dynamic region names (North / Central / South) → strict:false.
-const BatchHistoricalSchema = new mongoose.Schema({
-    date: { type: String, index: true }
 }, { collection: 'BatchHistoricalAggregations', strict: false });
 
 module.exports = {
