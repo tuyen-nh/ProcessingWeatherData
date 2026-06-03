@@ -100,13 +100,24 @@ kubectl exec -it $POD -n bigdata -- bash -c '/opt/spark/bin/spark-submit \
   --class tn.insat.tp3.StreamingAQI /opt/spark/app/app.jar'
 ```
 
-## 7. Batch analytics (run after parquet exists in HDFS)
+## 7. Batch analytics — ghi ProvinceAggregations + BatchHistoricalAggregations
 
-> Also runs automatically every day at 1 AM via the `batch-weather-analytics`
-> CronJob (k8s/13-batch-cronjob.yaml) — this manual run is optional/on-demand.
-> The CronJob reads the same jar from the `spark-app-jar` PVC, so step 3
-> (load-and-run.sh) must have populated it first.
-> Check / trigger manually:
+> ⚠️ ĐIỀU KIỆN: HDFS `/user/data/raw/weather_data/` phải có CSV **theo trạm**
+> (cột `station_id`,`time`,`temp`,`rhum`,`pm25`,`no2`). CSV gốc `export.csv`
+> KHÔNG có `station_id` → batch gộp về station=null → ~8 doc rác (avg_aqi 0),
+> ĐÈ chết data tốt. Sinh + nạp CSV chuẩn TRƯỚC (chạy 1 lần, cần internet):
+> 
+> ```bash
+> cd ServingLayer_API && node scripts/genHdfsCsv.js && cd ..   # -> /tmp/weather_stations_30d.csv (24480 dong)
+> kubectl cp /tmp/weather_stations_30d.csv bigdata/namenode-0:/tmp/weather_stations_30d.csv
+> kubectl exec -n bigdata namenode-0 -- hdfs dfs -rm -f '/user/data/raw/weather_data/*'
+> kubectl exec -n bigdata namenode-0 -- hdfs dfs -put -f /tmp/weather_stations_30d.csv /user/data/raw/weather_data/
+> ```
+> 
+> Có CSV theo trạm rồi → batch ra **1020 doc** (30 ngày × 34 trạm) + **34 doc**
+> tổng hợp, `date` lưu dạng string (khớp API `/daily`). CronJob 1h sáng
+> (k8s/13-batch-cronjob.yaml, đã cap RAM 512m) chạy lại an toàn — đè tốt-bằng-tốt.
+> Trigger tay:
 > 
 > ```bash
 > kubectl get cronjob -n bigdata
@@ -130,6 +141,83 @@ kubectl exec -it $POD -n bigdata -- bash -c '/opt/spark/bin/spark-submit \
 ```bash
 minikube service namenode -n bigdata       # HDFS — browse data
 minikube service spark-master -n bigdata   # Spark — watch jobs
+```
+
+## 9. Serving API (Node) — phục vụ data cho web
+
+> Đọc 4 collection Mongo (AQIStream_avg, RealTimeReadings, ProvinceAggregations,
+> BatchHistoricalAggregations). Cần file `ServingLayer_API/.env` có `MONGO_URI` (+ `PORT` tùy chọn).
+
+```bash
+cd ServingLayer_API
+npm install            # lần đầu
+npm start              # http://localhost:3000  (Ctrl+C để dừng)
+cd ..
+```
+
+## 10. (Tùy chọn) Fill data batch NHANH — không cần Spark/HDFS
+
+> `ProvinceAggregations` + `BatchHistoricalAggregations` có 2 cách điền:
+>   A. **Spark batch** (step 7) — đúng kiến trúc Lambda, là cái CronJob 1h sáng chạy.
+>   B. **fillBatch.js** (dưới đây) — Node kéo thẳng Open-Meteo -> Mongo, KHÔNG cần
+>      HDFS/Spark. Nhanh, tiện khi chỉ muốn data cho web mà không dựng cả cluster.
+> Cả hai cho cùng kết quả (1020 + 34, `date` string). KHÔNG đụng
+> AQIStream_avg/RealTimeReadings. Chạy lại bất cứ lúc nào để làm tươi.
+
+```bash
+cd ServingLayer_API
+node scripts/fillBatch.js     # -> ProvinceAggregations 1020 doc + BatchHistorical 34
+cd ..
+```
+
+> Lưu ý: KHÔNG chạy lẫn lộn — nếu CronJob Spark (step 7) chạy SAU fillBatch, nó
+> ghi đè lại (vẫn data tốt nếu HDFS đã có CSV theo trạm — step 7). Dùng A hoặc B
+> nhất quán.
+
+## 10b. Fill chart "Diễn biến trong ngày" hôm nay (KHÔNG cần treo máy)
+
+> Chart giờ-theo-ngày đọc `AQIStream_avg` — chỉ đầy khi StreamingAQI chạy live.
+> Để có đủ giờ 00:00 → giờ hiện tại MÀ KHÔNG treo máy cả đêm, seed thẳng từ
+> Open-Meteo (giờ VN, cùng `_id`/shape streaming). UPSERT theo `_id` nên KHÔNG
+> xóa data live; nếu sau đó chạy stream, nó ghi đè đúng giờ.
+
+```bash
+cd ServingLayer_API
+node scripts/fillToday.js     # -> AQIStream_avg gio 00:00..hien tai hom nay (34 tram)
+cd ..
+```
+
+> Chạy lại mỗi lần mở web nếu muốn chart cập nhật tới giờ hiện tại. Muốn data
+> CẬP NHẬT REAL-TIME tới từng phút thì mới cần chạy StreamingAQI (step 6) — còn
+> chỉ cần "đầy theo giờ" thì script này đủ, khỏi treo máy/stream.
+
+## 10c. Fill TẤT CẢ data web bằng 1 lệnh (npm scripts)
+
+> Gộp fillBatch (chart theo NGÀY) + fillToday (chart trong NGÀY). Tiện khi chỉ
+> muốn web có data đầy đủ mà không dựng cluster/stream. KHÔNG cần Spark/HDFS/treo máy.
+
+```bash
+cd ServingLayer_API
+npm run fill:all       # = fillBatch.js + fillToday.js
+# hoac rieng le:
+#   npm run fill:batch  -> ProvinceAggregations 1020 + BatchHistorical 34 (chart NGAY)
+#   npm run fill:today  -> AQIStream_avg 0h..hien tai     (chart trong NGAY)
+cd ..
+```
+
+> Luồng nhanh nhất để xem web (không cluster): `npm run fill:all` → `npm start`
+> (step 9) → frontend `npm run dev` (step 11). Xong, có data ngay.
+
+## 11. Frontend (Vite) — xem biểu đồ
+
+> Đọc API ở `http://localhost:3000` (đổi qua `VITE_API_BASE` nếu cần). Serving API
+> (step 9) phải đang chạy.
+
+```bash
+cd frontend
+npm install            # lần đầu
+npm run dev            # http://localhost:5173
+cd ..
 ```
 
 ## Debug

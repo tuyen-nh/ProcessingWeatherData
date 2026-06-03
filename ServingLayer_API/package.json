@@ -7,6 +7,9 @@
     "start": "node index.js",
     "dev": "node --watch index.js",
     "seed": "node scripts/seedDay.js",
+    "fill:batch": "node scripts/fillBatch.js",
+    "fill:today": "node scripts/fillToday.js",
+    "fill:all": "node scripts/fillBatch.js && node scripts/fillToday.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

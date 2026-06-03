@@ -66,7 +66,11 @@ public class BatchWeatherAnalytics {
                     // The path where the manual CSV export is stored in HDFS
                     .csv("hdfs://namenode:9000/user/data/raw/weather_data/")
                     .withColumnRenamed("time", "timestamp")
-                    .withColumn("date", to_date(col("timestamp")))
+                    // date as STRING "yyyy-MM-dd" (NOT DateType) so it matches the
+                    // string dates the API /daily filter + seed/fillBatch use.
+                    // to_date() would store a BSON Date → $gte/$lte string range
+                    // (from the History page) silently matches nothing.
+                    .withColumn("date", date_format(col("timestamp"), "yyyy-MM-dd"))
                     .withColumn("temp", col("temp").cast(DataTypes.DoubleType))
                     .withColumn("rhum", col("rhum").cast(DataTypes.DoubleType))
                     .withColumnRenamed("temp", "temperature")

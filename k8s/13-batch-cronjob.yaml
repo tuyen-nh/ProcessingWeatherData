@@ -45,6 +45,12 @@ spec:
                 - spark.driver.host=$(POD_IP)
                 - --conf
                 - spark.driver.bindAddress=0.0.0.0
+                # Cap resources so the batch fits even while the streaming jobs
+                # run (cluster = 2048 MB total; streaming uses ~1280 MB).
+                - --total-executor-cores
+                - "1"
+                - --executor-memory
+                - "512m"
                 - --packages
                 - org.mongodb.spark:mongo-spark-connector_2.12:3.0.1
                 - --class
