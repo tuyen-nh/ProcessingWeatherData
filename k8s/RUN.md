@@ -1,76 +1,139 @@
 # Running the Weather Big-Data Stack on Kubernetes
 
+> ⚠️ **Pick the right section for your OS:**
+> 
+> - **Linux / macOS (bash)** → use THIS section below. Line continuation = `\`,
+>   set vars with `POD=$(...)` (no spaces around `=`).
+> - **Windows (PowerShell)** → scroll down to the PowerShell section. Line
+>   continuation = `` ` ``, set vars with `$POD = ...`.
+> 
+> Do NOT mix them — PowerShell `$POD = ...` and backtick `` ` `` fail in bash
+> (you'll see `command not found` / `--master: command not found`).
+> Xubuntu = Linux → use the bash section.
+
 ## 0. One-time install + start cluster
+
 ```bash
 minikube start --memory=8192 --cpus=4 --driver=docker
 kubectl get nodes        # should show 1 node "Ready"
 ```
 
 ## 1. Build the JAR (needs Maven + JDK 8)
+
 ```bash
 cd BatchLayer_Hadoop && mvn clean package -DskipTests && cd ..
 ```
 
 ## 2. Deploy all infra (ordered, waits for readiness)
+
 ```bash
 bash k8s/deploy.sh
 kubectl get pods -n bigdata -w     # wait until ALL say Running, then Ctrl+C
 ```
 
 ## 3. Load CSVs into HDFS + copy JAR into Spark
+
 ```bash
 bash k8s/load-and-run.sh
 ```
 
 ## 4. Get the spark-master pod name (used below)
+
+> `$POD` only lives in the terminal where you run this. Each NEW terminal
+> (steps 5, 6) needs its own `POD=...` line first — that's why the commands
+> below repeat it. Run this once per terminal, or just use the full commands as-is.
+
 ```bash
 POD=$(kubectl get pod -n bigdata -l app=spark-master -o jsonpath='{.items[0].metadata.name}')
+echo $POD   # must be non-empty; if empty, spark-master not deployed (run k8s/deploy.sh)
 ```
 
 ## 5. Start the Producer (terminal A — leave running)
+
 ```bash
+POD=$(kubectl get pod -n bigdata -l app=spark-master -o jsonpath='{.items[0].metadata.name}')
 kubectl exec -it $POD -n bigdata -- java -cp /opt/spark/app/app.jar tn.insat.tp3.ApiToKafkaProducer
 ```
 
 ## 6. Start streaming jobs (each in its own terminal)
+
 ```bash
+# TWO things every client-mode submit below needs:
+#  1. spark.driver.host=$(hostname -i)  — driver runs INSIDE the spark-master
+#     pod; without this it tells executors to dial the pod *hostname*, which is
+#     NOT in k8s DNS -> "UnknownHostException" -> executors crash-loop (code 1)
+#     -> "Initial job has not accepted any resources". The pod IP IS routable.
+#     Must run via `bash -c '...'` so $(hostname -i) evaluates inside the pod.
+#  2. --total-executor-cores / --executor-memory — cluster is tiny
+#     (2 workers x 1024 MB = 2048 MB total); without caps the 1st job grabs
+#     everything and the 2nd sits WAITING forever ("Initial job has not accepted
+#     any resources"). RAM budget that fits all 3 jobs in 2048 MB:
+#       dumper 512m + StreamingAQI 768m + batch 512m = 1792m  (OK)
+#     StreamingAQI needs 768m because it runs 2 streams (raw + hourly window).
+#
+# After editing any .java: rebuild + re-copy the jar before re-running:
+#   cd BatchLayer_Hadoop && mvn clean package -DskipTests && cd ..
+#   POD=$(kubectl get pod -n bigdata -l app=spark-master -o jsonpath='{.items[0].metadata.name}')
+#   kubectl cp BatchLayer_Hadoop/target/batch-layer-hadoop-1.0-SNAPSHOT.jar bigdata/${POD}:/opt/spark/app/app.jar
+
 # terminal B — Kafka -> HDFS parquet
-kubectl exec -it $POD -n bigdata -- /opt/spark/bin/spark-submit \
+POD=$(kubectl get pod -n bigdata -l app=spark-master -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -it $POD -n bigdata -- bash -c '/opt/spark/bin/spark-submit \
   --master spark://spark-master:7077 --deploy-mode client \
-  --class tn.insat.tp3.KafkaToHDFSDumper /opt/spark/app/app.jar
+  --conf spark.driver.host=$(hostname -i) \
+  --total-executor-cores 1 --executor-memory 512m \
+  --class tn.insat.tp3.KafkaToHDFSDumper /opt/spark/app/app.jar'
 
 # terminal C — Kafka -> AQI -> MongoDB
-kubectl exec -it $POD -n bigdata -- /opt/spark/bin/spark-submit \
+# StreamingAQI chay 2 stream trong 1 app:
+#   - RealTimeReadings  : snapshot moi nhat / tram (override _id = station_id)
+#   - AQIStream_avg     : GOP 1 gio/tram (watermark 10'), timestamp +7 = gio VN.
+#                         Day la nguon chart "xu huong nhiet 1 ngay" (/hourly).
+# 2 stream + windowing can nhieu RAM hon -> dung 768m (512m co the OOM).
+POD=$(kubectl get pod -n bigdata -l app=spark-master -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -it $POD -n bigdata -- bash -c '/opt/spark/bin/spark-submit \
   --master spark://spark-master:7077 --deploy-mode client \
+  --conf spark.driver.host=$(hostname -i) \
+  --total-executor-cores 1 --executor-memory 768m \
+  --conf spark.jars.ivy=/tmp/.ivy2 \
   --packages org.mongodb.spark:mongo-spark-connector_2.12:3.0.1 \
-  --class tn.insat.tp3.StreamingAQI /opt/spark/app/app.jar
+  --class tn.insat.tp3.StreamingAQI /opt/spark/app/app.jar'
 ```
 
 ## 7. Batch analytics (run after parquet exists in HDFS)
+
 > Also runs automatically every day at 1 AM via the `batch-weather-analytics`
 > CronJob (k8s/13-batch-cronjob.yaml) — this manual run is optional/on-demand.
 > The CronJob reads the same jar from the `spark-app-jar` PVC, so step 3
 > (load-and-run.sh) must have populated it first.
 > Check / trigger manually:
+> 
 > ```bash
 > kubectl get cronjob -n bigdata
 > kubectl create job -n bigdata --from=cronjob/batch-weather-analytics batch-test
 > kubectl logs -n bigdata job/batch-test -f
 > ```
+
 ```bash
-kubectl exec -it $POD -n bigdata -- /opt/spark/bin/spark-submit \
+POD=$(kubectl get pod -n bigdata -l app=spark-master -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -it $POD -n bigdata -- bash -c '/opt/spark/bin/spark-submit \
   --master spark://spark-master:7077 --deploy-mode client \
+  --conf spark.driver.host=$(hostname -i) \
+  --total-executor-cores 1 --executor-memory 512m \
+  --conf spark.jars.ivy=/tmp/.ivy2 \
   --packages org.mongodb.spark:mongo-spark-connector_2.12:3.0.1 \
-  --class tn.insat.tp3.BatchWeatherAnalytics /opt/spark/app/app.jar
+  --class tn.insat.tp3.BatchWeatherAnalytics /opt/spark/app/app.jar'
 ```
 
 ## 8. Open the web UIs
+
 ```bash
 minikube service namenode -n bigdata       # HDFS — browse data
 minikube service spark-master -n bigdata   # Spark — watch jobs
 ```
 
 ## Debug
+
 ```bash
 kubectl get pods -n bigdata
 kubectl logs <pod> -n bigdata
@@ -79,66 +142,16 @@ kubectl exec -it namenode-0 -n bigdata -- hdfs dfsadmin -report
 ```
 
 ## Reset everything
+
 ```bash
 kubectl delete namespace bigdata     # deletes all pods + data
 ```
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 <!-- $env:PATH += ";C:\Program Files\Kubernetes\Minikube"; minikube dashboard  -->
-%  đây là câu lệnh để run dashboard trong power shell 
+
+%  đây là câu lệnh để run dashboard trong power shell
 ---
+
 ---
 
 # Running the Weather Big-Data Stack on Kubernetes (Windows PowerShell)
@@ -192,6 +205,7 @@ kubectl apply -f k8s/13-batch-cronjob.yaml
 ```
 
 Watch until all pods say `Running`:
+
 ```powershell
 kubectl get pods -n bigdata -w
 # Press Ctrl+C when all show 1/1 Running
@@ -247,19 +261,27 @@ kubectl exec -it $POD -n bigdata -- java -cp /opt/spark/app/app.jar tn.insat.tp3
 
 ## STEP 7 — Start Streaming jobs (each in its own terminal)
 
+# NOTE: cluster is tiny (2 workers x 1024 MB). By default each Spark app grabs
+
+# ALL cores + memory, so the 2nd streaming job sits WAITING forever
+
+# ("Initial job has not accepted any resources"). Cap every long-running job
+
+# with --total-executor-cores + --executor-memory so they coexist.
+
+> Note: driver runs inside the pod, so `$(hostname -i)` must evaluate there —
+> the whole spark-submit is passed as ONE single-quoted arg to `bash -c`.
+
 **Terminal B — Kafka → HDFS (raw data lake):**
+
 ```powershell
-kubectl exec -it $POD -n bigdata -- /opt/spark/bin/spark-submit `
-  --master spark://spark-master:7077 --deploy-mode client `
-  --class tn.insat.tp3.KafkaToHDFSDumper /opt/spark/app/app.jar
+kubectl exec -it $POD -n bigdata -- bash -c '/opt/spark/bin/spark-submit --master spark://spark-master:7077 --deploy-mode client --conf spark.driver.host=$(hostname -i) --total-executor-cores 1 --executor-memory 512m --class tn.insat.tp3.KafkaToHDFSDumper /opt/spark/app/app.jar'
 ```
 
 **Terminal C — Kafka → AQI → MongoDB (speed layer):**
+
 ```powershell
-kubectl exec -it $POD -n bigdata -- /opt/spark/bin/spark-submit `
-  --master spark://spark-master:7077 --deploy-mode client `
-  --packages org.mongodb.spark:mongo-spark-connector_2.12:3.0.1 `
-  --class tn.insat.tp3.StreamingAQI /opt/spark/app/app.jar
+kubectl exec -it $POD -n bigdata -- bash -c '/opt/spark/bin/spark-submit --master spark://spark-master:7077 --deploy-mode client --conf spark.driver.host=$(hostname -i) --total-executor-cores 1 --executor-memory 768m --conf spark.jars.ivy=/tmp/.ivy2 --packages org.mongodb.spark:mongo-spark-connector_2.12:3.0.1 --class tn.insat.tp3.StreamingAQI /opt/spark/app/app.jar'
 ```
 
 ---
@@ -267,10 +289,7 @@ kubectl exec -it $POD -n bigdata -- /opt/spark/bin/spark-submit `
 ## STEP 8 — Batch analytics (run after parquet data exists in HDFS)
 
 ```powershell
-kubectl exec -it $POD -n bigdata -- /opt/spark/bin/spark-submit `
-  --master spark://spark-master:7077 --deploy-mode client `
-  --packages org.mongodb.spark:mongo-spark-connector_2.12:3.0.1 `
-  --class tn.insat.tp3.BatchWeatherAnalytics /opt/spark/app/app.jar
+kubectl exec -it $POD -n bigdata -- bash -c '/opt/spark/bin/spark-submit --master spark://spark-master:7077 --deploy-mode client --conf spark.driver.host=$(hostname -i) --total-executor-cores 1 --executor-memory 512m --conf spark.jars.ivy=/tmp/.ivy2 --packages org.mongodb.spark:mongo-spark-connector_2.12:3.0.1 --class tn.insat.tp3.BatchWeatherAnalytics /opt/spark/app/app.jar'
 ```
 
 ---
@@ -302,19 +321,7 @@ kubectl exec -it namenode-0 -n bigdata -- hdfs dfsadmin -report  # HDFS status
 ```powershell
 kubectl delete namespace bigdata    # deletes ALL pods + data
 # To redeploy, start again from STEP 2
-
-
-
-
-
-
-
-
-
-
-
-
-
 ```
+
 $POD = kubectl get pod -n bigdata -l app=spark-master -o jsonpath='{.items[0].metadata.name}'
 kubectl exec -it $POD -n bigdata -- java -cp /opt/spark/app/app.jar tn.insat.tp3.ApiToKafkaProducer

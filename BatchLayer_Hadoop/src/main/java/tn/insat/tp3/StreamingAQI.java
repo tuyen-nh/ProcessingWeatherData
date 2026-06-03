@@ -96,11 +96,10 @@ public class StreamingAQI {
                                                                 .when(col("temperature").leq(40), lit("Hot"))
                                                                 .otherwise(lit("Extreme Heat")));
 
-                // Two sinks share the same realtimeAlerts rows:
-                //  - RealTimeReadings: OVERRIDE one doc per station (_id = station_id), so the
-                //    snapshot collection stays at ~34 docs (latest reading per station).
-                //  - AQIStream_avg: APPEND every reading (per-station day-series history) — the
-                //    source for the home chart (/hourly) + /realtime/series.
+                // STREAM 1 sink: RealTimeReadings — OVERRIDE one doc per station
+                // (_id = station_id) so the snapshot collection stays at ~34 docs
+                // (latest reading per station). Data thô KHÔNG còn ghi AQIStream_avg
+                // nữa — AQIStream_avg giờ do STREAM 2 (hourly) đảm nhiệm.
                 realtimeAlerts.writeStream()
                                 .outputMode(OutputMode.Append())
                                 .foreachBatch((batchDF, batchId) -> {
@@ -116,22 +115,99 @@ public class StreamingAQI {
                                                                 .option("spark.mongodb.output.collection",
                                                                                 "RealTimeReadings")
                                                                 .save();
+                                                System.out.println("Batch " + batchId
+                                                                + " written to RealTimeReadings: "
+                                                                + batchDF.count() + " records.");
+                                        }
+                                })
+                                // Requirement 5: Exactly-once semantics via Checkpointing (trên HDFS cluster)
+                                .option("checkpointLocation", "hdfs://namenode:9000/checkpoints/realtime_stream")
+                                .start();
 
-                                                // APPEND: every reading becomes a new doc (history).
+                // STREAM 2: Hourly windowed aggregation per station — nguồn cho biểu
+                // đồ "xu hướng nhiệt độ trong 1 ngày" (24 điểm/ngày/trạm).
+                // Watermark 10' = data đến trễ hơn 10 phút bị loại, không gộp vào window.
+                Dataset<Row> hourlyAggregations = realtimeAlerts
+                                .withWatermark("timestamp", "10 minutes")
+                                .groupBy(
+                                                window(col("timestamp"), "1 hour"),
+                                                col("station_id"),
+                                                col("province"))
+                                .agg(
+                                                // PM2.5: avg, max, min
+                                                round(avg("pm25"), 2).alias("avg_pm25"),
+                                                round(max("pm25"), 2).alias("max_pm25"),
+                                                round(min("pm25"), 2).alias("min_pm25"),
+                                                // Temperature: avg, max, min
+                                                round(avg("temperature"), 1).alias("avg_temp"),
+                                                round(max("temperature"), 1).alias("max_temp"),
+                                                round(min("temperature"), 1).alias("min_temp"),
+                                                // Humidity: avg, max, min
+                                                round(avg("humidity"), 1).alias("avg_humidity"),
+                                                round(max("humidity"), 1).alias("max_humidity"),
+                                                round(min("humidity"), 1).alias("min_humidity"),
+                                                // NO2: avg
+                                                round(avg("no2"), 2).alias("avg_no2"),
+                                                // AQI: avg, max (aqi_index đã tính ở realtimeAlerts)
+                                                round(avg("aqi_index"), 0).alias("avg_aqi"),
+                                                max("aqi_index").alias("max_aqi"))
+                                // Cảnh báo AQI tính lại từ avg_aqi của cả window
+                                .withColumn("aqi_alert",
+                                                when(col("avg_aqi").leq(50), lit("Good"))
+                                                                .when(col("avg_aqi").leq(100), lit("Moderate"))
+                                                                .when(col("avg_aqi").leq(150),
+                                                                                lit("Unhealthy for Sensitive Groups"))
+                                                                .when(col("avg_aqi").leq(200), lit("Unhealthy"))
+                                                                .when(col("avg_aqi").leq(300), lit("Very Unhealthy"))
+                                                                .otherwise(lit("Hazardous")))
+                                // Giờ VN = window.start (UTC) + 7h. Lưu vào 'timestamp' để
+                                // API getUTCHours(timestamp) ra đúng giờ VN, và frontend
+                                // clock() (format UTC) cũng hiện đúng giờ VN trên trục.
+                                .withColumn("timestamp", expr("`window`.start + INTERVAL 7 HOURS"))
+                                .withColumn("hour_end", expr("`window`.end + INTERVAL 7 HOURS"))
+                                .drop("window")
+                                // date theo NGÀY VN — API /hourly lọc theo field này.
+                                .withColumn("date", date_format(col("timestamp"), "yyyy-MM-dd"))
+                                // Map tên field sang chuẩn API/frontend mong đợi
+                                // (temperature/humidity/pm25/no2/aqi_index). Giữ luôn các
+                                // cột avg/max/min gốc (schema Mongo strict:false).
+                                .withColumn("temperature", col("avg_temp"))
+                                .withColumn("humidity", col("avg_humidity"))
+                                .withColumn("pm25", col("avg_pm25"))
+                                .withColumn("no2", col("avg_no2"))
+                                .withColumn("aqi_index", col("avg_aqi"))
+                                // temp_alert tính từ nhiệt độ trung bình của giờ
+                                .withColumn("temp_alert",
+                                                when(col("avg_temp").lt(10), lit("Too Cold"))
+                                                                .when(col("avg_temp").leq(35), lit("Normal"))
+                                                                .when(col("avg_temp").leq(40), lit("Hot"))
+                                                                .otherwise(lit("Extreme Heat")))
+                                // _id ổn định = station + giờ VN -> Update() ghi đè đúng doc,
+                                // không tạo bản trùng khi window đang cập nhật.
+                                .withColumn("_id", concat_ws("_", col("station_id"),
+                                                date_format(col("timestamp"), "yyyy-MM-dd HH:mm:ss")));
+
+                hourlyAggregations.writeStream()
+                                // Update: giờ đang chạy vẫn cập nhật dần (không đợi chốt window).
+                                .outputMode(OutputMode.Update())
+                                .foreachBatch((batchDF, batchId) -> {
+                                        if (!batchDF.isEmpty()) {
                                                 batchDF.write()
                                                                 .format("mongo")
                                                                 .mode("append")
                                                                 .option("spark.mongodb.output.uri",
                                                                                 "mongodb+srv://tuyen:tuyen@cluster0.tkzrw9q.mongodb.net/")
                                                                 .option("spark.mongodb.output.database", "Big_Data")
-                                                                .option("spark.mongodb.output.collection", "AQIStream_avg")
+                                                                .option("spark.mongodb.output.collection",
+                                                                                "AQIStream_avg")
                                                                 .save();
-                                                System.out.println("Batch " + batchId + " written to MongoDB: "
-                                                                + batchDF.count() + " records.");
+                                                System.out.println("Hourly batch " + batchId
+                                                                + " written to AQIStream_avg: "
+                                                                + batchDF.count() + " windows.");
                                         }
                                 })
-                                // Requirement 5: Exactly-once semantics via Checkpointing (trên HDFS cluster)
-                                .option("checkpointLocation", "hdfs://namenode:9000/checkpoints/realtime_stream")
+                                // Checkpoint RIÊNG — path mới để tránh state cũ (hourly_agg).
+                                .option("checkpointLocation", "hdfs://namenode:9000/checkpoints/aqi_hourly_vn")
                                 .start();
 
                 // Monitor both streams simultaneously — exits if either one fails
