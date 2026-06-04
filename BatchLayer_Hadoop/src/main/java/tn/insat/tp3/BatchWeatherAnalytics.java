@@ -153,7 +153,9 @@ public class BatchWeatherAnalytics {
 
         // Complex Multi-stage Transformation (Req 2)
         Dataset<Row> transformedDf = enrichedDf
-                .withColumn("heat_index", callUDF("calculateHeatIndex", col("temperature"), col("humidity")))
+                .withColumn("heat_index", callUDF("calculateHeatIndex",
+                        col("temperature").cast(DataTypes.DoubleType),
+                        col("humidity").cast(DataTypes.DoubleType)))
                 .withColumn("weather_condition",
                         when(col("pm25").gt(150), "Hazardous")
                                 .when(col("temperature").gt(35), "Extreme Heat")
@@ -192,7 +194,7 @@ public class BatchWeatherAnalytics {
         // Per-reading hour + AQI so the daily rollup can carry avg_aqi + peak_aqi_hour.
         Dataset<Row> withHourAqi = transformedDf
                 .withColumn("hour", hour(col("timestamp")))
-                .withColumn("aqi", callUDF("pm25ToAQI", col("pm25")));
+                .withColumn("aqi", callUDF("pm25ToAQI", col("pm25").cast(DataTypes.DoubleType)));
 
         System.out.println("--- Per-Province DAILY Analytics (date × 34 Stations) ---");
         Dataset<Row> provinceDf = withHourAqi
